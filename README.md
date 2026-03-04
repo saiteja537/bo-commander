@@ -151,7 +151,8 @@ Bulk administrative operations:
 
 ### AI Assistant
 
-![AI Assistant](docs/screenshots/ai_assistant.png)
+<img width="956" height="500" alt="ai_assistant" src="https://github.com/user-attachments/assets/1da67add-b460-415f-8871-13388f340da1" />
+
 
 The AI Assistant analyzes your **live BO system context** and provides targeted troubleshooting guidance.
 
