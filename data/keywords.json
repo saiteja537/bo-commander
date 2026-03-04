@@ -1,0 +1,287 @@
+{
+  "incident_types": [
+
+    // ================= CORE PLATFORM =================
+
+    {
+      "keyword": "FWM 20030",
+      "title": "CMS Unreachable (Connection Timeout)",
+      "severity": "CRITICAL",
+      "category": "CORE",
+      "primary_log": "logging/*_sia.log",
+      "follow_up_files": ["logging/*_cms_*.glf"],
+      "cause": "CMS not responding on port 6400."
+    },
+    {
+      "keyword": "Cluster configuration error",
+      "title": "CMS Cluster Configuration Corruption",
+      "severity": "CRITICAL",
+      "category": "CORE",
+      "primary_log": "logging/*_cms_*.glf",
+      "follow_up_files": [],
+      "cause": "CMS cluster metadata corruption."
+    },
+    {
+      "keyword": "Deadlock detected",
+      "title": "CMS Database Deadlock",
+      "severity": "CRITICAL",
+      "category": "DB",
+      "primary_log": "logging/*_cms_*.glf",
+      "follow_up_files": [],
+      "cause": "High concurrency DB lock contention."
+    },
+    {
+      "keyword": "Server Intelligence Agent failed",
+      "title": "SIA Startup Failure",
+      "severity": "CRITICAL",
+      "category": "CORE",
+      "primary_log": "logging/*_sia.log",
+      "follow_up_files": [],
+      "cause": "Invalid DB credentials or port conflict."
+    },
+    {
+      "keyword": "Node unavailable",
+      "title": "Cluster Node Down",
+      "severity": "CRITICAL",
+      "category": "CORE",
+      "primary_log": "logging/*_sia.log",
+      "follow_up_files": [],
+      "cause": "Network interruption or host crash."
+    },
+
+    // ================= DATABASE =================
+
+    {
+      "keyword": "Database connection failed",
+      "title": "Repository Database Outage",
+      "severity": "CRITICAL",
+      "category": "DB",
+      "primary_log": "logging/*_cms_*.glf",
+      "follow_up_files": [".env"],
+      "cause": "CMS lost connectivity to system DB."
+    },
+    {
+      "keyword": "ORA-",
+      "title": "Oracle Database Error",
+      "severity": "HIGH",
+      "category": "DB",
+      "primary_log": "logging/*_cms_*.glf",
+      "follow_up_files": [],
+      "cause": "Oracle backend error."
+    },
+    {
+      "keyword": "SQL Server does not exist",
+      "title": "SQL Server Unreachable",
+      "severity": "CRITICAL",
+      "category": "DB",
+      "primary_log": "logging/*_cms_*.glf",
+      "follow_up_files": [],
+      "cause": "SQL Server offline or firewall blocked."
+    },
+
+    // ================= WEB / TOMCAT =================
+
+    {
+      "keyword": "java.lang.OutOfMemoryError",
+      "title": "JVM Memory Exhaustion",
+      "severity": "HIGH",
+      "category": "WEB",
+      "primary_log": "tomcat/logs/catalina.out",
+      "follow_up_files": ["tomcat/bin/setenv.bat"],
+      "cause": "Heap size too low or memory leak."
+    },
+    {
+      "keyword": "Address already in use",
+      "title": "Tomcat Port Conflict",
+      "severity": "HIGH",
+      "category": "WEB",
+      "primary_log": "tomcat/logs/stderr.log",
+      "follow_up_files": ["tomcat/conf/server.xml"],
+      "cause": "Port already bound by another process."
+    },
+    {
+      "keyword": "HTTP Status 500",
+      "title": "Web Application Internal Error",
+      "severity": "HIGH",
+      "category": "WEB",
+      "primary_log": "tomcat/logs/localhost.log",
+      "follow_up_files": [],
+      "cause": "Webapp failure or dependency down."
+    },
+    {
+      "keyword": "SSLHandshakeException",
+      "title": "SSL Handshake Failure",
+      "severity": "HIGH",
+      "category": "SECURITY",
+      "primary_log": "tomcat/logs/catalina.out",
+      "follow_up_files": [],
+      "cause": "TLS mismatch or certificate issue."
+    },
+
+    // ================= SECURITY / AUTH =================
+
+    {
+      "keyword": "Authentication failed",
+      "title": "LDAP Authentication Failure",
+      "severity": "HIGH",
+      "category": "SECURITY",
+      "primary_log": "logging/*_cms_*.glf",
+      "follow_up_files": [],
+      "cause": "LDAP server unreachable or bind failure."
+    },
+    {
+      "keyword": "Invalid token",
+      "title": "OpenDocument Token Failure",
+      "severity": "MEDIUM",
+      "category": "SDK",
+      "primary_log": "tomcat/logs/localhost.log",
+      "follow_up_files": [],
+      "cause": "Expired or invalid OpenDocument token."
+    },
+
+    // ================= REPORTING =================
+
+    {
+      "keyword": "WebIntelligenceProcessingServer terminated unexpectedly",
+      "title": "WebI Processing Crash",
+      "severity": "CRITICAL",
+      "category": "REPORT",
+      "primary_log": "logging/*_WebIntelligenceProcessingServer_*.glf",
+      "follow_up_files": [],
+      "cause": "Memory exhaustion or corrupt report."
+    },
+    {
+      "keyword": "CrystalReportsProcessingServer",
+      "title": "Crystal Reports Processing Failure",
+      "severity": "HIGH",
+      "category": "REPORT",
+      "primary_log": "logging/*_CrystalReportsProcessingServer_*.glf",
+      "follow_up_files": [],
+      "cause": "Database timeout or processing failure."
+    },
+    {
+      "keyword": "Universe connection failed",
+      "title": "Universe Connection Failure",
+      "severity": "HIGH",
+      "category": "REPORT",
+      "primary_log": "logging/*_ConnectionServer_*.glf",
+      "follow_up_files": [],
+      "cause": "IDT or DB connectivity issue."
+    },
+
+    // ================= FRS =================
+
+    {
+      "keyword": "SI_DISK_FULL",
+      "title": "Disk Space Exhausted",
+      "severity": "HIGH",
+      "category": "OS",
+      "primary_log": "logging/*_InputFileRepository_*.glf",
+      "follow_up_files": [],
+      "cause": "FRS partition full."
+    },
+    {
+      "keyword": "FRS is not reachable",
+      "title": "FRS Unavailable",
+      "severity": "CRITICAL",
+      "category": "CORE",
+      "primary_log": "logging/*_InputFileRepository_*.glf",
+      "follow_up_files": [],
+      "cause": "FRS service down or storage inaccessible."
+    },
+
+    // ================= LCM / PROMOTION =================
+
+    {
+      "keyword": "LCMJob",
+      "title": "Promotion Job Failure",
+      "severity": "HIGH",
+      "category": "LCM",
+      "primary_log": "logging/*_lcmbiarengine_*.log",
+      "follow_up_files": [],
+      "cause": "Promotion job execution failure."
+    },
+    {
+      "keyword": "BIAR file corrupted",
+      "title": "BIAR Import Corruption",
+      "severity": "HIGH",
+      "category": "LCM",
+      "primary_log": "logging/*_lcmbiarengine_*.log",
+      "follow_up_files": [],
+      "cause": "Corrupted BIAR package."
+    },
+
+    // ================= INSTALL / UPGRADE =================
+
+    {
+      "keyword": "WDeploy failed",
+      "title": "Web Application Deployment Failure",
+      "severity": "HIGH",
+      "category": "INSTALL",
+      "primary_log": "InstallData/logs/*.log",
+      "follow_up_files": [],
+      "cause": "Tomcat deployment failure."
+    },
+    {
+      "keyword": "Upgrade failed",
+      "title": "BO Upgrade Failure",
+      "severity": "CRITICAL",
+      "category": "INSTALL",
+      "primary_log": "InstallData/logs/*.log",
+      "follow_up_files": [],
+      "cause": "Repository upgrade or patching failure."
+    },
+
+    // ================= NETWORK =================
+
+    {
+      "keyword": "Connection refused",
+      "title": "Network Connection Refused",
+      "severity": "CRITICAL",
+      "category": "NETWORK",
+      "primary_log": "logging/*_cms_*.glf",
+      "follow_up_files": [],
+      "cause": "Firewall or service not listening."
+    },
+    {
+      "keyword": "Unknown host",
+      "title": "DNS Resolution Failure",
+      "severity": "HIGH",
+      "category": "NETWORK",
+      "primary_log": "logging/*_cms_*.glf",
+      "follow_up_files": [],
+      "cause": "DNS misconfiguration."
+    },
+    {
+      "keyword": "Read timed out",
+      "title": "Network Timeout",
+      "severity": "HIGH",
+      "category": "NETWORK",
+      "primary_log": "logging/*_cms_*.glf",
+      "follow_up_files": [],
+      "cause": "Slow or unstable network connection."
+    },
+
+    // ================= OS RESOURCE =================
+
+    {
+      "keyword": "Too many open files",
+      "title": "File Descriptor Exhaustion",
+      "severity": "HIGH",
+      "category": "OS",
+      "primary_log": "logging/*",
+      "follow_up_files": [],
+      "cause": "OS file handle limit reached."
+    },
+    {
+      "keyword": "Thread pool exhausted",
+      "title": "Thread Pool Exhaustion",
+      "severity": "HIGH",
+      "category": "OS",
+      "primary_log": "logging/*",
+      "follow_up_files": [],
+      "cause": "Server thread capacity exceeded."
+    }
+
+  ]
+}

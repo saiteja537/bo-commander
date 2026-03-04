@@ -1,0 +1,1196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BO Commander — Intelligent SAP BusinessObjects Control Center</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Reset & Variables ───────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #080e17;
+      --bg2:       #0d1824;
+      --bg3:       #112030;
+      --border:    #1a2e42;
+      --border2:   #1e3a52;
+      --cyan:      #22d3ee;
+      --blue:      #3b82f6;
+      --indigo:    #6366f1;
+      --green:     #22c55e;
+      --amber:     #f59e0b;
+      --red:       #ef4444;
+      --text:      #e2eaf4;
+      --text2:     #8fafc8;
+      --text3:     #4a6b80;
+      --mono:      'JetBrains Mono', monospace;
+      --head:      'Space Mono', monospace;
+      --body:      'DM Sans', sans-serif;
+      --radius:    12px;
+      --glow-c:    0 0 40px #22d3ee22;
+      --glow-b:    0 0 40px #3b82f622;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: var(--body);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* ── Noise overlay ───────────────────────────────────────────────────── */
+    body::before {
+      content: '';
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+      opacity: .5;
+    }
+
+    /* ── Grid lines BG ───────────────────────────────────────────────────── */
+    body::after {
+      content: '';
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      background-image:
+        linear-gradient(var(--border) 1px, transparent 1px),
+        linear-gradient(90deg, var(--border) 1px, transparent 1px);
+      background-size: 60px 60px;
+      opacity: .35;
+    }
+
+    section, header, footer, nav { position: relative; z-index: 1; }
+
+    /* ── Nav ─────────────────────────────────────────────────────────────── */
+    nav {
+      position: sticky; top: 0; z-index: 100;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 60px; height: 64px;
+      background: #080e17cc;
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nav-logo {
+      font-family: var(--head);
+      font-size: 15px; font-weight: 700;
+      color: var(--cyan);
+      letter-spacing: .05em;
+      text-decoration: none;
+    }
+    .nav-logo span { color: var(--text2); }
+
+    .nav-links { display: flex; gap: 32px; }
+    .nav-links a {
+      font-size: 13px; font-weight: 500;
+      color: var(--text2); text-decoration: none;
+      transition: color .2s;
+    }
+    .nav-links a:hover { color: var(--cyan); }
+
+    .nav-cta {
+      font-size: 13px; font-weight: 600;
+      padding: 8px 20px;
+      background: var(--cyan);
+      color: var(--bg); border-radius: 6px;
+      text-decoration: none;
+      transition: opacity .2s;
+    }
+    .nav-cta:hover { opacity: .85; }
+
+    /* ── Hero ─────────────────────────────────────────────────────────────── */
+    header {
+      min-height: 92vh;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      text-align: center;
+      padding: 80px 40px 60px;
+    }
+
+    .hero-badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 6px 14px;
+      border: 1px solid var(--cyan);
+      border-radius: 20px;
+      font-family: var(--mono); font-size: 11px;
+      color: var(--cyan); letter-spacing: .08em;
+      margin-bottom: 36px;
+      animation: fadeUp .8s ease both;
+    }
+    .hero-badge::before {
+      content: ''; width: 6px; height: 6px;
+      background: var(--cyan); border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%,100% { opacity: 1; transform: scale(1); }
+      50%      { opacity: .4; transform: scale(.8); }
+    }
+
+    h1 {
+      font-family: var(--head);
+      font-size: clamp(38px, 6vw, 76px);
+      font-weight: 700; line-height: 1.05;
+      letter-spacing: -.02em;
+      animation: fadeUp .9s .1s ease both;
+    }
+    h1 .hl { color: var(--cyan); }
+
+    .hero-sub {
+      max-width: 640px;
+      margin: 24px auto 0;
+      font-size: 18px; font-weight: 300;
+      color: var(--text2); line-height: 1.7;
+      animation: fadeUp 1s .2s ease both;
+    }
+
+    .hero-btns {
+      display: flex; gap: 16px; margin-top: 48px;
+      animation: fadeUp 1s .35s ease both;
+    }
+
+    .btn-primary, .btn-ghost {
+      padding: 14px 32px; border-radius: 8px;
+      font-size: 15px; font-weight: 600;
+      text-decoration: none; transition: all .2s;
+      cursor: pointer; border: none;
+    }
+    .btn-primary {
+      background: var(--cyan); color: var(--bg);
+      box-shadow: 0 0 32px #22d3ee44;
+    }
+    .btn-primary:hover { opacity: .88; transform: translateY(-1px); }
+
+    .btn-ghost {
+      background: transparent;
+      border: 1px solid var(--border2);
+      color: var(--text);
+    }
+    .btn-ghost:hover { border-color: var(--cyan); color: var(--cyan); }
+
+    /* Terminal mockup */
+    .terminal-wrap {
+      width: 100%; max-width: 720px;
+      margin: 64px auto 0;
+      animation: fadeUp 1s .5s ease both;
+    }
+
+    .terminal {
+      background: #07111c;
+      border: 1px solid var(--border2);
+      border-radius: var(--radius);
+      overflow: hidden;
+      box-shadow: 0 30px 80px #00000066, var(--glow-c);
+    }
+
+    .term-bar {
+      display: flex; align-items: center; gap: 8px;
+      padding: 12px 16px;
+      background: #0a1a28;
+      border-bottom: 1px solid var(--border);
+    }
+    .term-dot {
+      width: 12px; height: 12px; border-radius: 50%;
+    }
+    .term-title {
+      font-family: var(--mono); font-size: 11px;
+      color: var(--text3); margin-left: auto; margin-right: auto;
+    }
+
+    .term-body {
+      padding: 24px 28px;
+      font-family: var(--mono); font-size: 13px;
+      line-height: 2;
+    }
+    .t-cyan  { color: var(--cyan); }
+    .t-green { color: var(--green); }
+    .t-amber { color: var(--amber); }
+    .t-gray  { color: var(--text3); }
+    .t-white { color: var(--text); }
+    .t-blue  { color: #60a5fa; }
+
+    /* ── Stats band ───────────────────────────────────────────────────────── */
+    .stats {
+      display: flex; justify-content: center; gap: 0;
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      background: var(--bg2);
+    }
+    .stat-item {
+      flex: 1; max-width: 220px;
+      padding: 40px 24px; text-align: center;
+      border-right: 1px solid var(--border);
+    }
+    .stat-item:last-child { border-right: none; }
+    .stat-num {
+      font-family: var(--head);
+      font-size: 44px; font-weight: 700;
+      color: var(--cyan); display: block;
+    }
+    .stat-lbl {
+      font-size: 13px; color: var(--text2); margin-top: 4px; display: block;
+    }
+
+    /* ── Sections ─────────────────────────────────────────────────────────── */
+    .section {
+      padding: 100px 60px;
+    }
+    .section-inner { max-width: 1160px; margin: 0 auto; }
+
+    .section-tag {
+      font-family: var(--mono); font-size: 11px;
+      letter-spacing: .12em; color: var(--cyan);
+      text-transform: uppercase; margin-bottom: 12px;
+      display: block;
+    }
+    .section-title {
+      font-family: var(--head);
+      font-size: clamp(26px, 3.5vw, 44px);
+      line-height: 1.15; font-weight: 700;
+    }
+    .section-sub {
+      font-size: 16px; color: var(--text2);
+      max-width: 560px; margin-top: 14px; line-height: 1.7;
+    }
+
+    /* ── Feature grid ─────────────────────────────────────────────────────── */
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 20px; margin-top: 56px;
+    }
+
+    .feat-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px;
+      transition: border-color .25s, transform .25s, box-shadow .25s;
+      position: relative; overflow: hidden;
+    }
+    .feat-card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(90deg, transparent, var(--accent, var(--cyan)), transparent);
+      opacity: 0; transition: opacity .3s;
+    }
+    .feat-card:hover {
+      border-color: var(--accent, var(--cyan));
+      transform: translateY(-3px);
+      box-shadow: 0 16px 40px #00000044, 0 0 30px var(--accent-glow, #22d3ee18);
+    }
+    .feat-card:hover::before { opacity: 1; }
+
+    .feat-icon {
+      width: 44px; height: 44px;
+      background: var(--accent-bg, #0e2535);
+      border: 1px solid var(--accent-border, #1a3545);
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px; margin-bottom: 18px;
+    }
+    .feat-title {
+      font-family: var(--head);
+      font-size: 14px; font-weight: 700;
+      color: var(--text); margin-bottom: 8px;
+    }
+    .feat-desc {
+      font-size: 13px; color: var(--text2); line-height: 1.65;
+    }
+    .feat-tags {
+      display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px;
+    }
+    .feat-tag {
+      font-family: var(--mono); font-size: 10px;
+      padding: 3px 8px; border-radius: 4px;
+      background: var(--bg3); color: var(--text2);
+      border: 1px solid var(--border);
+    }
+
+    /* ── Page list ────────────────────────────────────────────────────────── */
+    .page-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 10px; margin-top: 40px;
+    }
+    .page-pill {
+      display: flex; align-items: center; gap: 10px;
+      padding: 12px 16px;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 13px; color: var(--text2);
+      transition: border-color .2s, color .2s;
+    }
+    .page-pill:hover { border-color: var(--cyan); color: var(--text); }
+    .page-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+
+    /* ── AI warning banner ────────────────────────────────────────────────── */
+    .ai-warn {
+      background: #1a1400;
+      border: 1px solid #78350f;
+      border-radius: var(--radius);
+      padding: 28px 32px;
+      display: flex; gap: 20px; align-items: flex-start;
+      margin-top: 60px;
+    }
+    .ai-warn-icon { font-size: 28px; flex-shrink: 0; margin-top: 2px; }
+    .ai-warn h3 {
+      font-family: var(--head); font-size: 16px;
+      color: var(--amber); margin-bottom: 8px;
+    }
+    .ai-warn p { font-size: 14px; color: #d97706; line-height: 1.65; }
+
+    /* ── Architecture diagram ─────────────────────────────────────────────── */
+    .arch-flow {
+      display: flex; align-items: center; gap: 0;
+      margin-top: 48px; flex-wrap: wrap;
+    }
+    .arch-node {
+      flex: 1; min-width: 140px;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px; text-align: center;
+    }
+    .arch-node .icon { font-size: 28px; display: block; margin-bottom: 8px; }
+    .arch-node .label {
+      font-family: var(--mono); font-size: 11px;
+      color: var(--cyan); text-transform: uppercase; letter-spacing: .08em;
+    }
+    .arch-node .sub { font-size: 12px; color: var(--text2); margin-top: 4px; }
+    .arch-arrow {
+      font-size: 20px; color: var(--border2);
+      padding: 0 8px; flex-shrink: 0;
+    }
+
+    /* ── Install block ────────────────────────────────────────────────────── */
+    .install-block {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px; margin-top: 40px;
+    }
+    @media(max-width:700px) { .install-block { grid-template-columns: 1fr; } }
+
+    .code-block {
+      background: #07111c;
+      border: 1px solid var(--border2);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .code-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 16px;
+      background: #0a1a28;
+      border-bottom: 1px solid var(--border);
+      font-family: var(--mono); font-size: 11px;
+      color: var(--text3);
+    }
+    .code-header span { color: var(--cyan); }
+    pre {
+      padding: 20px;
+      font-family: var(--mono); font-size: 13px;
+      color: var(--text); line-height: 1.8;
+      overflow-x: auto;
+    }
+    pre .cmd { color: var(--cyan); }
+    pre .comment { color: var(--text3); }
+    pre .flag { color: var(--amber); }
+
+    /* ── About / Author ───────────────────────────────────────────────────── */
+    .author-card {
+      background: var(--bg2);
+      border: 1px solid var(--border2);
+      border-radius: 16px;
+      padding: 40px 48px;
+      display: flex; gap: 40px; align-items: center;
+      margin-top: 24px;
+      position: relative; overflow: hidden;
+    }
+    .author-card::before {
+      content: '';
+      position: absolute; top: 0; left: 0; width: 4px; height: 100%;
+      background: linear-gradient(180deg, var(--cyan), var(--blue));
+    }
+    .author-avatar {
+      width: 80px; height: 80px; border-radius: 50%;
+      background: linear-gradient(135deg, var(--cyan) 0%, var(--blue) 100%);
+      display: flex; align-items: center; justify-content: center;
+      font-family: var(--head); font-size: 28px; font-weight: 700;
+      color: var(--bg); flex-shrink: 0;
+    }
+    .author-info h3 {
+      font-family: var(--head); font-size: 22px;
+      margin-bottom: 4px;
+    }
+    .author-role {
+      font-size: 14px; color: var(--cyan); margin-bottom: 14px;
+    }
+    .author-links { display: flex; gap: 14px; flex-wrap: wrap; }
+    .author-link {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 8px 16px;
+      background: var(--bg3);
+      border: 1px solid var(--border2);
+      border-radius: 6px;
+      font-size: 13px; color: var(--text2);
+      text-decoration: none; transition: all .2s;
+    }
+    .author-link:hover { border-color: var(--cyan); color: var(--cyan); }
+
+    /* ── Footer ───────────────────────────────────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      background: var(--bg2);
+      padding: 40px 60px;
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 16px;
+    }
+    .footer-left {
+      font-family: var(--head); font-size: 13px; color: var(--text2);
+    }
+    .footer-left strong { color: var(--cyan); }
+    .footer-right {
+      font-size: 12px; color: var(--text3);
+    }
+    .footer-links { display: flex; gap: 24px; flex-wrap: wrap; }
+    .footer-links a {
+      font-size: 12px; color: var(--text3); text-decoration: none;
+      transition: color .2s;
+    }
+    .footer-links a:hover { color: var(--cyan); }
+
+    /* ── Animations ───────────────────────────────────────────────────────── */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(24px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .reveal {
+      opacity: 0; transform: translateY(20px);
+      transition: opacity .7s ease, transform .7s ease;
+    }
+    .reveal.visible { opacity: 1; transform: translateY(0); }
+
+    /* ── Q&A accordion ────────────────────────────────────────────────────── */
+    .qa-list { display:grid; gap:12px; margin-top:44px; }
+    .qa-item { background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
+    .qa-q { padding:18px 24px; display:flex; justify-content:space-between; align-items:center; gap:16px; cursor:pointer; user-select:none; transition:background .2s; }
+    .qa-q:hover { background:var(--bg3); }
+    .qa-q-text { font-size:15px; font-weight:600; color:var(--text); }
+    .qa-arrow { color:var(--cyan); font-size:20px; flex-shrink:0; transition:transform .3s; }
+    .qa-item.open .qa-arrow { transform:rotate(90deg); }
+    .qa-a { max-height:0; overflow:hidden; transition:max-height .4s ease, padding .3s; padding:0 24px; }
+    .qa-item.open .qa-a { max-height:600px; padding:0 24px 22px; }
+    .qa-a p { font-size:14px; color:var(--text2); line-height:1.75; }
+    .qa-a ul { padding-left:18px; margin-top:8px; }
+    .qa-a li { font-size:14px; color:var(--text2); line-height:1.75; margin-bottom:3px; }
+    .qa-a code { font-family:var(--mono); font-size:12px; background:var(--bg3); padding:2px 7px; border-radius:4px; color:var(--cyan); }
+    .qa-a a { color:var(--cyan); text-decoration:none; }
+    .qa-a a:hover { text-decoration:underline; }
+
+    /* ── Feature directory ─────────────────────────────────────────────────── */
+    .dir-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(330px,1fr)); gap:13px; margin-top:44px; }
+    .dir-card { background:var(--bg2); border:1px solid var(--border); border-radius:10px; padding:17px 20px; display:flex; gap:14px; align-items:flex-start; transition:border-color .2s,transform .2s; }
+    .dir-card:hover { border-color:var(--border2); transform:translateY(-2px); }
+    .dir-icon { font-size:22px; flex-shrink:0; margin-top:1px; }
+    .dir-name { font-family:var(--mono); font-size:12px; color:var(--cyan); font-weight:700; margin-bottom:4px; letter-spacing:.03em; }
+    .dir-desc { font-size:13px; color:var(--text2); line-height:1.55; }
+    .dir-cat  { font-family:var(--mono); font-size:10px; color:var(--text3); margin-top:6px; text-transform:uppercase; letter-spacing:.08em; }
+
+    /* ── Contact CTA ───────────────────────────────────────────────────────── */
+    .cta-box { background:linear-gradient(135deg,#0d1824 0%,#112030 100%); border:1px solid var(--border2); border-radius:16px; padding:52px 60px; text-align:center; position:relative; overflow:hidden; }
+    .cta-box::before { content:''; position:absolute; inset:0; background:radial-gradient(ellipse at 50% 0%,#22d3ee0e,transparent 70%); pointer-events:none; }
+    .cta-box h2 { font-family:var(--head); font-size:clamp(20px,3vw,34px); margin-bottom:14px; position:relative; }
+    .cta-box h2 span { color:var(--cyan); }
+    .cta-box p { font-size:16px; color:var(--text2); max-width:540px; margin:0 auto 34px; line-height:1.7; position:relative; }
+    .cta-btns { display:flex; gap:14px; justify-content:center; flex-wrap:wrap; position:relative; }
+    .cta-btn { display:inline-flex; align-items:center; gap:9px; padding:14px 28px; border-radius:8px; font-size:14px; font-weight:600; text-decoration:none; transition:all .2s; }
+    .cta-btn.primary { background:var(--cyan); color:var(--bg); }
+    .cta-btn.primary:hover { opacity:.88; transform:translateY(-1px); }
+    .cta-btn.ghost { background:transparent; border:1px solid var(--border2); color:var(--text2); }
+    .cta-btn.ghost:hover { border-color:var(--cyan); color:var(--cyan); }
+    .cta-note { margin-top:26px; display:inline-block; padding:11px 18px; background:#1a1100; border:1px solid #78350f; border-radius:8px; font-size:13px; color:#d97706; position:relative; }
+
+    /* ── Developer profile ─────────────────────────────────────────────────── */
+    .skill-pills { display:flex; flex-wrap:wrap; gap:9px; margin:16px 0 20px; }
+    .skill-pill { display:flex; align-items:center; gap:7px; padding:6px 14px; background:var(--bg3); border:1px solid var(--border2); border-radius:20px; font-size:12px; font-weight:500; color:var(--text2); }
+    .s-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+
+    /* ── Setup section ─────────────────────────────────────────────────────── */
+    pre .key { color:#86efac; }
+    pre .val { color:#f9a8d4; }
+    pre .sec { color:var(--amber); font-weight:bold; }
+    .lic-box { background:#060f18; border:1px solid var(--border); border-radius:10px; padding:24px 28px; margin-top:28px; }
+    .lic-box h4 { font-family:var(--mono); font-size:13px; color:var(--cyan); margin-bottom:14px; letter-spacing:.05em; }
+    .lic-row { display:flex; gap:10px; align-items:flex-start; margin-bottom:10px; font-size:13px; color:var(--text2); line-height:1.6; }
+    .lic-ico { flex-shrink:0; font-size:15px; }
+
+    /* ── Scrollbar ────────────────────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<!-- ── NAV ─────────────────────────────────────────────────────────────────── -->
+<nav>
+  <a href="#" class="nav-logo">BO<span>Commander</span></a>
+  <div class="nav-links">
+    <a href="#features">Features</a>
+    <a href="#all-features">All Features</a>
+    <a href="#architecture">Architecture</a>
+    <a href="#setup">Setup</a>
+    <a href="#faq">FAQ</a>
+    <a href="#about">About</a>
+    <a href="#contact">Contact</a>
+  </div>
+  <a href="https://github.com" class="nav-cta" target="_blank">GitHub →</a>
+</nav>
+
+<!-- ── HERO ────────────────────────────────────────────────────────────────── -->
+<header>
+  <div class="hero-badge">v1.0.0 &nbsp;·&nbsp; SAP BusinessObjects Admin Tool</div>
+
+  <h1>
+    Intelligent SAP BO<br />
+    <span class="hl">Control Center</span>
+  </h1>
+
+  <p class="hero-sub">
+    A fully-featured, AI-powered desktop application for administering, monitoring,
+    diagnosing and automating your SAP BusinessObjects environment — built by an
+    SAP BO engineer, for SAP BO engineers.
+  </p>
+
+  <div class="hero-btns">
+    <a href="#setup" class="btn-primary">Get Started</a>
+    <a href="#all-features" class="btn-ghost">All Features →</a>
+  </div>
+
+  <!-- Terminal -->
+  <div class="terminal-wrap">
+    <div class="terminal">
+      <div class="term-bar">
+        <div class="term-dot" style="background:#ef4444"></div>
+        <div class="term-dot" style="background:#f59e0b"></div>
+        <div class="term-dot" style="background:#22c55e"></div>
+        <span class="term-title">bo_commander.py — BO Commander v1.0.0</span>
+      </div>
+      <div class="term-body">
+        <div><span class="t-cyan">██████╗  ██████╗  &nbsp;COMMANDER</span></div>
+        <div><span class="t-gray">──────────────────────────────────────────────</span></div>
+        <div><span class="t-white">BO Commander</span> <span class="t-gray">v1.0.0  │  </span><span class="t-cyan">Intelligent SAP BO Control Center</span></div>
+        <div><span class="t-gray">──────────────────────────────────────────────</span></div>
+        <div></div>
+        <div><span class="t-amber">Developed by:</span></div>
+        <div>&nbsp;&nbsp;<span class="t-white">Sai Teja Guddanti</span></div>
+        <div>&nbsp;&nbsp;<span class="t-gray">✉  <a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="91e2f0f8e5f4fbf0f6e4f5f5f0ffe5f8a8a8a8d1f6fcf0f8fdbff2fefc">[email&#160;protected]</a></span></div>
+        <div>&nbsp;&nbsp;<span class="t-cyan">🔗 linkedin.com/in/sai-teja-628082288</span></div>
+        <div></div>
+        <div><span class="t-amber">License:</span> <span class="t-green">✔  ACTIVATED — Sai Teja Guddanti</span></div>
+        <div></div>
+        <div><span class="t-gray">──────────────────────────────────────────────</span></div>
+        <div>&nbsp;&nbsp;<span class="t-cyan">⚡  Loading GUI ...</span></div>
+        <div>&nbsp;&nbsp;<span class="t-blue">📖  Features → http://localhost:8765</span></div>
+        <div>&nbsp;&nbsp;<span class="t-amber">⚠   AI may make mistakes — always verify.</span></div>
+        <div><span class="t-gray">──────────────────────────────────────────────</span></div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ── STATS ────────────────────────────────────────────────────────────────── -->
+<div class="stats">
+  <div class="stat-item"><span class="stat-num">50+</span><span class="stat-lbl">Feature Pages</span></div>
+  <div class="stat-item"><span class="stat-num">8</span><span class="stat-lbl">AI-Powered Tools</span></div>
+  <div class="stat-item"><span class="stat-num">100%</span><span class="stat-lbl">Real CMS Data</span></div>
+  <div class="stat-item"><span class="stat-num">0</span><span class="stat-lbl">Mock / Test Data</span></div>
+  <div class="stat-item"><span class="stat-num">4.x</span><span class="stat-lbl">BO Versions Supported</span></div>
+</div>
+
+<!-- ── FEATURES ─────────────────────────────────────────────────────────────── -->
+<section class="section" id="features">
+  <div class="section-inner">
+    <span class="section-tag reveal">Feature Modules</span>
+    <h2 class="section-title reveal">Everything you need to<br />manage SAP BusinessObjects</h2>
+    <p class="section-sub reveal">
+      From AI-powered health monitoring to deep repository diagnostics — all in one
+      dark-themed desktop application that connects directly to your CMS.
+    </p>
+
+    <div class="feature-grid">
+
+      <div class="feat-card reveal" style="--accent:#22d3ee;--accent-glow:#22d3ee18;--accent-bg:#08202c;--accent-border:#0e3040;">
+        <div class="feat-icon">🤖</div>
+        <div class="feat-title">AI Sentinel</div>
+        <div class="feat-desc">8-layer automated health scan powered by Gemini AI. Detects security risks, performance anomalies, and configuration issues — on demand, never intrusive.</div>
+        <div class="feat-tags"><span class="feat-tag">Gemini AI</span><span class="feat-tag">On-demand</span><span class="feat-tag">8 checks</span></div>
+      </div>
+
+      <div class="feat-card reveal" style="--accent:#6366f1;--accent-glow:#6366f118;--accent-bg:#10102a;--accent-border:#1e1e44;">
+        <div class="feat-icon">💬</div>
+        <div class="feat-title">AI Assistant</div>
+        <div class="feat-desc">SAP BO-domain-only chatbot. Answers admin questions, JVM tuning, scheduling errors, LDAP setup, universe issues. Rejects non-BO topics politely.</div>
+        <div class="feat-tags"><span class="feat-tag">BO-domain only</span><span class="feat-tag">Live context</span><span class="feat-tag">Quick actions</span></div>
+      </div>
+
+      <div class="feat-card reveal" style="--accent:#22c55e;--accent-glow:#22c55e18;--accent-bg:#08200e;--accent-border:#0e3018;">
+        <div class="feat-icon">🩺</div>
+        <div class="feat-title">Self Healing</div>
+        <div class="feat-desc">Automatically detects and remediates common BO issues — stuck services, OOM conditions, overloaded processing servers — with audit trail of every action.</div>
+        <div class="feat-tags"><span class="feat-tag">Auto-remediate</span><span class="feat-tag">Audit trail</span></div>
+      </div>
+
+      <div class="feat-card reveal" style="--accent:#f59e0b;--accent-glow:#f59e0b18;--accent-bg:#1a1100;--accent-border:#2a1e00;">
+        <div class="feat-icon">🖥️</div>
+        <div class="feat-title">System Monitor</div>
+        <div class="feat-desc">Real-time OS scan per PAM 4.2/4.3/4.4 guidelines. Checks firewall state, memory, disk, SAP BO processes (java/tomcat/cms), Windows services, and all critical ports.</div>
+        <div class="feat-tags"><span class="feat-tag">PAM compliant</span><span class="feat-tag">Port scan</span><span class="feat-tag">Process list</span></div>
+      </div>
+
+      <div class="feat-card reveal" style="--accent:#ef4444;--accent-glow:#ef444418;--accent-bg:#1a0808;--accent-border:#2a1010;">
+        <div class="feat-icon">🔐</div>
+        <div class="feat-title">SSO / Trusted Auth Tester</div>
+        <div class="feat-desc">6-step real validation pipeline: DNS resolution → TCP CMS port → token generation → REST logon → session validation → logoff. Tests all 5 SSO types.</div>
+        <div class="feat-tags"><span class="feat-tag">Trusted Auth</span><span class="feat-tag">SAML</span><span class="feat-tag">Kerberos</span><span class="feat-tag">NTLM</span><span class="feat-tag">OIDC</span></div>
+      </div>
+
+      <div class="feat-card reveal" style="--accent:#3b82f6;--accent-glow:#3b82f618;--accent-bg:#08101e;--accent-border:#0e1e38;">
+        <div class="feat-icon">👥</div>
+        <div class="feat-title">LDAP / AD Sync Monitor</div>
+        <div class="feat-desc">Live group table showing BO vs AD user count parity. Colour-coded health states (In Sync / Mismatch / Stale / Empty). Force Sync button with sync history.</div>
+        <div class="feat-tags"><span class="feat-tag">Real CMS query</span><span class="feat-tag">Group health</span></div>
+      </div>
+
+      <div class="feat-card reveal" style="--accent:#a855f7;--accent-glow:#a855f718;--accent-bg:#120820;--accent-border:#200e34;">
+        <div class="feat-icon">🗄️</div>
+        <div class="feat-title">Repository Diagnostic</div>
+        <div class="feat-desc">8 parallel CMS DB health checks: connectivity, table integrity, index timing, orphan detection, broken references, object counters, query performance, repo size.</div>
+        <div class="feat-tags"><span class="feat-tag">8 real checks</span><span class="feat-tag">Severity icons</span></div>
+      </div>
+
+      <div class="feat-card reveal" style="--accent:#06b6d4;--accent-glow:#06b6d418;--accent-bg:#06181c;--accent-border:#0c2830;">
+        <div class="feat-icon">🧹</div>
+        <div class="feat-title">Housekeeping</div>
+        <div class="feat-desc">14 category tiles (Reports, Instances, Failed, Users, Folders, Universes, Connections, Audit Events, Schedules, Stuck Instances, Temp Objects…). Bulk delete selected.</div>
+        <div class="feat-tags"><span class="feat-tag">14 categories</span><span class="feat-tag">Bulk delete</span></div>
+      </div>
+
+    </div>
+
+    <!-- AI warning -->
+    <div class="ai-warn reveal">
+      <div class="ai-warn-icon">⚠️</div>
+      <div>
+        <h3>A note on AI tools</h3>
+        <p>
+          BO Commander includes AI-powered features (AI Sentinel, AI Assistant, Self Healing).
+          These are powerful tools — but <strong>AI can and does make mistakes.</strong>
+          Always review AI-suggested actions before applying them to a production environment.
+          The AI assistant is intentionally restricted to SAP BusinessObjects topics only.
+          For critical operations (server restarts, bulk deletes, schema changes),
+          use your own judgement and follow your organisation's change-management process.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── ALL PAGES ─────────────────────────────────────────────────────────────── -->
+<section class="section" id="pages" style="background:var(--bg2);padding-top:80px;padding-bottom:80px;">
+  <div class="section-inner">
+    <span class="section-tag reveal">Complete Module List</span>
+    <h2 class="section-title reveal">50+ pages across 5 sections</h2>
+    <p class="section-sub reveal">Every page queries live CMS data. Empty pages on a fresh server are correct behaviour — not bugs.</p>
+
+    <div class="page-grid reveal">
+      <!-- Core -->
+      <div class="page-pill"><div class="page-dot" style="background:#22d3ee"></div>Dashboard</div>
+      <div class="page-pill"><div class="page-dot" style="background:#22d3ee"></div>AI Sentinel</div>
+      <div class="page-pill"><div class="page-dot" style="background:#22d3ee"></div>Notifications</div>
+      <!-- AI Tools -->
+      <div class="page-pill"><div class="page-dot" style="background:#6366f1"></div>AI Assistant</div>
+      <div class="page-pill"><div class="page-dot" style="background:#6366f1"></div>Self Healing</div>
+      <div class="page-pill"><div class="page-dot" style="background:#6366f1"></div>Health Heatmap</div>
+      <!-- Power Tools -->
+      <div class="page-pill"><div class="page-dot" style="background:#f59e0b"></div>Security Scanner</div>
+      <div class="page-pill"><div class="page-dot" style="background:#f59e0b"></div>System Monitor</div>
+      <div class="page-pill"><div class="page-dot" style="background:#f59e0b"></div>Orphan Purge</div>
+      <div class="page-pill"><div class="page-dot" style="background:#f59e0b"></div>Query Builder</div>
+      <div class="page-pill"><div class="page-dot" style="background:#f59e0b"></div>Dep. Resolver</div>
+      <div class="page-pill"><div class="page-dot" style="background:#f59e0b"></div>Instance Cleanup</div>
+      <div class="page-pill"><div class="page-dot" style="background:#f59e0b"></div>Failed Schedules</div>
+      <div class="page-pill"><div class="page-dot" style="background:#f59e0b"></div>User Activity</div>
+      <div class="page-pill"><div class="page-dot" style="background:#f59e0b"></div>Server Health</div>
+      <div class="page-pill"><div class="page-dot" style="background:#f59e0b"></div>Broken Reports</div>
+      <div class="page-pill"><div class="page-dot" style="background:#f59e0b"></div>Housekeeping</div>
+      <div class="page-pill"><div class="page-dot" style="background:#f59e0b"></div>Broken Objects</div>
+      <div class="page-pill"><div class="page-dot" style="background:#f59e0b"></div>Deep Search</div>
+      <div class="page-pill"><div class="page-dot" style="background:#f59e0b"></div>Impact Analysis</div>
+      <div class="page-pill"><div class="page-dot" style="background:#f59e0b"></div>Log Correlation</div>
+      <div class="page-pill"><div class="page-dot" style="background:#f59e0b"></div>Instance Deep Control</div>
+      <div class="page-pill"><div class="page-dot" style="background:#f59e0b"></div>Promotion Resolver</div>
+      <!-- Diagnostics -->
+      <div class="page-pill"><div class="page-dot" style="background:#ef4444"></div>SSO Tester</div>
+      <div class="page-pill"><div class="page-dot" style="background:#ef4444"></div>LDAP Sync Monitor</div>
+      <div class="page-pill"><div class="page-dot" style="background:#ef4444"></div>Repo Diagnostic</div>
+      <!-- CMC Tabs -->
+      <div class="page-pill"><div class="page-dot" style="background:#3b82f6"></div>Users</div>
+      <div class="page-pill"><div class="page-dot" style="background:#3b82f6"></div>Sessions</div>
+      <div class="page-pill"><div class="page-dot" style="background:#3b82f6"></div>Servers</div>
+      <div class="page-pill"><div class="page-dot" style="background:#3b82f6"></div>Folders</div>
+      <div class="page-pill"><div class="page-dot" style="background:#3b82f6"></div>Reports</div>
+      <div class="page-pill"><div class="page-dot" style="background:#3b82f6"></div>Report Viewer</div>
+      <div class="page-pill"><div class="page-dot" style="background:#3b82f6"></div>Report Interaction</div>
+      <div class="page-pill"><div class="page-dot" style="background:#3b82f6"></div>Universes</div>
+      <div class="page-pill"><div class="page-dot" style="background:#3b82f6"></div>Connections</div>
+      <div class="page-pill"><div class="page-dot" style="background:#3b82f6"></div>OLAP Connections</div>
+      <div class="page-pill"><div class="page-dot" style="background:#3b82f6"></div>BW Connections</div>
+      <div class="page-pill"><div class="page-dot" style="background:#3b82f6"></div>Connection Manager</div>
+      <div class="page-pill"><div class="page-dot" style="background:#3b82f6"></div>Instance Manager</div>
+      <div class="page-pill"><div class="page-dot" style="background:#3b82f6"></div>Bulk Ops</div>
+      <div class="page-pill"><div class="page-dot" style="background:#3b82f6"></div>Scheduling</div>
+      <div class="page-pill"><div class="page-dot" style="background:#3b82f6"></div>Licenses</div>
+      <div class="page-pill"><div class="page-dot" style="background:#3b82f6"></div>Audit</div>
+      <div class="page-pill"><div class="page-dot" style="background:#3b82f6"></div>Settings</div>
+    </div>
+  </div>
+</section>
+
+<!-- ── ARCHITECTURE ──────────────────────────────────────────────────────────── -->
+<section class="section" id="architecture">
+  <div class="section-inner">
+    <span class="section-tag reveal">Under the hood</span>
+    <h2 class="section-title reveal">Architecture</h2>
+    <p class="section-sub reveal">Python + customtkinter GUI communicating directly with the SAP BO REST/SDK APIs. No middleware, no web server in the data path.</p>
+
+    <div class="arch-flow reveal">
+      <div class="arch-node">
+        <span class="icon">🖥️</span>
+        <span class="label">CustomTkinter GUI</span>
+        <span class="sub">Python desktop app</span>
+      </div>
+      <div class="arch-arrow">→</div>
+      <div class="arch-node">
+        <span class="icon">🔗</span>
+        <span class="label">SAP BO REST API</span>
+        <span class="sub">/biprws endpoints</span>
+      </div>
+      <div class="arch-arrow">→</div>
+      <div class="arch-node">
+        <span class="icon">🗄️</span>
+        <span class="label">CMS Database</span>
+        <span class="sub">CI_INFOOBJECTS · CI_SYSTEMOBJECTS</span>
+      </div>
+    </div>
+
+    <div class="arch-flow reveal" style="margin-top:16px;">
+      <div class="arch-node" style="--accent:var(--indigo)">
+        <span class="icon">🤖</span>
+        <span class="label">Gemini AI</span>
+        <span class="sub">AI Sentinel · AI Assistant</span>
+      </div>
+      <div class="arch-arrow">+</div>
+      <div class="arch-node">
+        <span class="icon">⚙️</span>
+        <span class="label">Windows OS</span>
+        <span class="sub">netsh · sc · tasklist · netstat</span>
+      </div>
+      <div class="arch-arrow">+</div>
+      <div class="arch-node">
+        <span class="icon">🌐</span>
+        <span class="label">Local Web Server</span>
+        <span class="sub">Product docs on localhost:8765</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ── SETUP / CONFIG ──────────────────────────────────────────────────────── -->
+<section class="section" id="setup" style="background:var(--bg2);">
+  <div class="section-inner">
+    <span class="section-tag reveal">Getting Started</span>
+    <h2 class="section-title reveal">Setup &amp; Configuration</h2>
+    <p class="section-sub reveal">
+      Two files control all configuration:
+      <code style="font-family:var(--mono);color:var(--cyan);font-size:13px;">.env</code> for secrets
+      and <code style="font-family:var(--mono);color:var(--cyan);font-size:13px;">config.py</code> for app settings.
+      Never commit <code style="font-family:var(--mono);color:var(--cyan);font-size:13px;">.env</code> to source control.
+    </p>
+
+    <div class="install-block reveal">
+      <div class="code-block">
+        <div class="code-header"><span>.env</span> — secrets &amp; credentials</div>
+        <pre><span class="comment"># ── SAP BO Server ───────────────────────</span>
+<span class="key">BO_HOST</span>      = <span class="val">your-bo-server.company.com</span>
+<span class="key">BO_PORT</span>      = <span class="val">6405</span>
+<span class="key">BO_USERNAME</span>  = <span class="val">Administrator</span>
+<span class="key">BO_PASSWORD</span>  = <span class="val">your_password_here</span>
+<span class="key">BO_AUTH_TYPE</span> = <span class="val">secEnterprise</span>
+
+<span class="comment"># ── AI API Key ───────────────────────────</span>
+<span class="comment"># Get free key → makersuite.google.com</span>
+<span class="key">GEMINI_API_KEY</span> = <span class="val">AIzaSy_paste_your_key_here</span>
+
+
+      </div>
+
+      <div class="code-block">
+        <div class="code-header"><span>BO_AUTH_TYPE</span> — authentication options</div>
+        <pre><span class="comment"># SAP BO Enterprise accounts (default)</span>
+<span class="key">BO_AUTH_TYPE</span>=<span class="val">secEnterprise</span>
+
+<span class="comment"># Windows Active Directory / SSO</span>
+<span class="key">BO_AUTH_TYPE</span>=<span class="val">secWinAD</span>
+
+<span class="comment"># LDAP directory</span>
+<span class="key">BO_AUTH_TYPE</span>=<span class="val">secLDAP</span>
+
+<span class="comment"># SAP system authentication</span>
+<span class="key">BO_AUTH_TYPE</span>=<span class="val">secSAPR3</span>
+
+<span class="comment"># ── CMS port is usually ─────────────────</span>
+<span class="comment"># BI 4.x → 6405</span>
+<span class="comment"># Older   → 6400</span>
+<span class="comment"># Check: CMC → Servers → CMS → Properties</span></pre>
+      </div>
+    </div>
+
+    <div class="code-block reveal" style="margin-top:16px;">
+      <div class="code-header"><span>Source install</span> — Python 3.10+ required</div>
+      <pre><span class="comment"># 1. Clone and enter the folder</span>
+<span class="cmd">git clone</span> https://github.com/&lt;your-repo&gt;/bo-commander
+<span class="cmd">cd</span> bo-commander
+
+<span class="comment"># 2. Install dependencies</span>
+<span class="cmd">pip install</span> <span class="flag">-r</span> requirements.txt
+
+<span class="comment"># 3. Copy the example config and fill it in</span>
+<span class="cmd">copy</span> .env.example .env
+<span class="comment">#  → Edit .env with your BO server details + Gemini API key</span>
+
+<span class="comment"># 4. Launch</span>
+<span class="cmd">python</span> bo_commander.py</pre>
+    </div>
+
+    <!-- Build .exe block removed as requested -->
+
+    <div class="code-block reveal" style="margin-top:16px;">
+      <div class="code-header"><span>requirements.txt</span></div>
+      <pre>customtkinter&gt;=5.2.0
+requests&gt;=2.31.0
+google-generativeai&gt;=0.5.0
+python-dotenv&gt;=1.0.0
+Pillow&gt;=10.0.0
+openpyxl&gt;=3.1.0
+matplotlib&gt;=3.8.0
+python-dateutil&gt;=2.8.0</pre>
+    </div>
+
+    <div class="lic-box reveal">
+      <h4>🔑  LICENSE KEY — REQUIRED EVERY 30 DAYS</h4>
+      <div class="lic-row"><span class="lic-ico">⏰</span><span>License keys are valid for <strong style="color:var(--text)">30 days</strong> from activation. The app will ask you to renew when your key expires.</span></div>
+      <div class="lic-row"><span class="lic-ico">✉</span><span>To get a key or renew: email <strong><a href="mailto:saitejaguddanti999@gmail.com" style="color:var(--cyan);text-decoration:none;">saitejaguddanti999@gmail.com</a></strong> or message on <a href="https://www.linkedin.com/in/sai-teja-628082288" style="color:var(--cyan);text-decoration:none;" target="_blank">LinkedIn</a>.</span></div>
+      <div class="lic-row"><span class="lic-ico">💻</span><span>Keys are machine-bound. Include your name and machine hostname when requesting.</span></div>
+      <div class="lic-row"><span class="lic-ico">🔄</span><span>Renewal is <strong style="color:var(--green)">free</strong>. Reach out before expiry — usually renewed same day.</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ── ALL FEATURES DIRECTORY ────────────────────────────────────────────────── -->
+<section class="section" id="all-features">
+  <div class="section-inner">
+    <span class="section-tag reveal">Feature Directory</span>
+    <h2 class="section-title reveal">Every feature, explained</h2>
+    <p class="section-sub reveal">A complete directory of all 50+ pages in BO Commander — what each one does, at a glance.</p>
+
+    <div class="dir-grid">
+      <div class="dir-card reveal"><div class="dir-icon">🏠</div><div><div class="dir-name">Dashboard</div><div class="dir-desc">At-a-glance health overview: connected server, total users, active sessions, failed instances, live alerts from AI Sentinel.</div><div class="dir-cat">Core</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">🤖</div><div><div class="dir-name">AI Sentinel</div><div class="dir-desc">8-layer Gemini AI health scan: security gaps, overloaded servers, failed jobs, stale accounts, scheduling backlogs. On-demand, never intrusive.</div><div class="dir-cat">Core · AI</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">🔔</div><div><div class="dir-name">Notifications</div><div class="dir-desc">Live notification centre fed by Sentinel alerts and system events. Mark read, filter by severity, jump to related pages.</div><div class="dir-cat">Core</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">💬</div><div><div class="dir-name">AI Assistant</div><div class="dir-desc">Gemini-powered chatbot locked to SAP BO topics only. Ask anything about CMC, scheduling, universes, LDAP, JVM tuning, licensing. Refuses non-BO questions gracefully.</div><div class="dir-cat">AI Tools</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">🩺</div><div><div class="dir-name">Self Healing</div><div class="dir-desc">Auto-detects and remediates common BO issues: stuck APS servers, OOM services, over-queued job servers. Every fix is logged in an audit trail.</div><div class="dir-cat">AI Tools</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">🌡️</div><div><div class="dir-name">Health Heatmap</div><div class="dir-desc">Colour-coded grid of every BO server node. Green / amber / red cells for CPU, memory, connection count, and job queue — updated in real time.</div><div class="dir-cat">AI Tools</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">🔒</div><div><div class="dir-name">Security Scanner</div><div class="dir-desc">Scans CMS for admin accounts with weak settings, never-logged-in accounts, excessive group memberships, and public folder exposure. Excel export.</div><div class="dir-cat">Power Tools</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">🖥️</div><div><div class="dir-name">System Monitor</div><div class="dir-desc">PAM-compliant real-time OS check: firewall state, memory/disk, all SAP BO Java processes, critical ports (6400, 8080, 8443…), Windows service status.</div><div class="dir-cat">Power Tools</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">🧹</div><div><div class="dir-name">Orphan Purge</div><div class="dir-desc">Finds and bulk-deletes orphaned CMS objects: reports with no parent folder, instances with deleted parent, broken universe links, dangling connection references.</div><div class="dir-cat">Power Tools</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">🔍</div><div><div class="dir-name">Query Builder</div><div class="dir-desc">GUI CMS query builder. Construct SELECT queries against CI_INFOOBJECTS / CI_APPOBJECTS / CI_SYSTEMOBJECTS with filters, sorting, limit. Live results table + export.</div><div class="dir-cat">Power Tools</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">🕸️</div><div><div class="dir-name">Dep. Resolver</div><div class="dir-desc">Maps which reports use which universes, which universes use which connections. Tree view + export of dependency graph.</div><div class="dir-cat">Power Tools</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">🗑️</div><div><div class="dir-name">Instance Cleanup</div><div class="dir-desc">Bulk-delete old report instances by age, status, or date range. Preview count before deletion. Keep-latest-N-per-report option.</div><div class="dir-cat">Power Tools</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">⚠️</div><div><div class="dir-name">Failed Schedules</div><div class="dir-desc">Lists all failed schedule instances with error message and owner. Bulk-retry, reschedule with new parameters, or delete permanently.</div><div class="dir-cat">Power Tools</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">📈</div><div><div class="dir-name">User Activity</div><div class="dir-desc">Login history, last-active timestamps, and session counts per user. Identify dormant accounts, peak usage hours, and heavy users. Export to Excel.</div><div class="dir-cat">Power Tools</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">💚</div><div><div class="dir-name">Server Health</div><div class="dir-desc">Per-node status grid: CPU, memory, active sessions, job queue, uptime, error rate. Drill into any node for a full metrics timeline.</div><div class="dir-cat">Power Tools</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">🛠️</div><div><div class="dir-name">Broken Reports</div><div class="dir-desc">Scans for reports with broken connections, missing universes, failed last run, or invalid parameters. Shows impact count + quick-fix options.</div><div class="dir-cat">Power Tools</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">🧺</div><div><div class="dir-name">Housekeeping</div><div class="dir-desc">14-category live-count dashboard (Reports, Instances, Failed Jobs, Users, Folders, Universes, Connections, Audit Events…). Visualisation charts + Excel export with embedded charts.</div><div class="dir-cat">Power Tools</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">💥</div><div><div class="dir-name">Broken Objects</div><div class="dir-desc">CMS scan for objects in error state — broken document references, invalid kind/owner, zero-byte files. Bulk-delete or flag for review.</div><div class="dir-cat">Power Tools</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">🔎</div><div><div class="dir-name">Deep Search</div><div class="dir-desc">Full-text search across all CMS object types. Search by name, description, owner, kind, folder. Results grouped by type with direct navigation.</div><div class="dir-cat">Power Tools</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">💡</div><div><div class="dir-name">Impact Analysis</div><div class="dir-desc">Before modifying a universe or connection, see exactly which reports and users would be affected. Left: source objects. Right: dependents with severity tagging.</div><div class="dir-cat">Power Tools</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">📋</div><div><div class="dir-name">Log Correlation</div><div class="dir-desc">Load multiple BO log files simultaneously. Cross-correlate errors by timestamp, error code, or server name. Highlights patterns across APS, CMS, and Tomcat logs.</div><div class="dir-cat">Power Tools</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">⚙️</div><div><div class="dir-name">Instance Deep Control</div><div class="dir-desc">Granular view of every running/queued instance. Pause, resume, reprioritise, or force-fail individual instances. Filter by server, owner, status, or age.</div><div class="dir-cat">Power Tools</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">🚀</div><div><div class="dir-name">Promotion Resolver</div><div class="dir-desc">View LCM promotion jobs, detect conflicts, compare objects between source and target environments, and resolve conflicts before promoting.</div><div class="dir-cat">Power Tools</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">🔐</div><div><div class="dir-name">SSO Tester</div><div class="dir-desc">6-step pipeline test for all 5 SSO types: Trusted Auth, SAML, Kerberos, NTLM, OIDC. Each step shows pass/fail/error with raw response for debugging.</div><div class="dir-cat">Diagnostics</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">🔄</div><div><div class="dir-name">LDAP Sync Monitor</div><div class="dir-desc">Real-time BO vs AD group comparison. In Sync / Mismatch / Stale / Empty health states. Force Sync individual groups. Sync history timeline.</div><div class="dir-cat">Diagnostics</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">🗄️</div><div><div class="dir-name">Repo Diagnostic</div><div class="dir-desc">8 parallel CMS database health checks: connectivity, table integrity, index timing, orphan detection, broken references, object counters, query performance, repo size.</div><div class="dir-cat">Diagnostics</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">👤</div><div><div class="dir-name">Users</div><div class="dir-desc">Full user management: list, search, create, edit, disable, delete, import from CSV. Group assignment, password reset, bulk operations, Excel export.</div><div class="dir-cat">CMC Tabs</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">🔗</div><div><div class="dir-name">Sessions</div><div class="dir-desc">Live active session list with user, server, logon time, client IP, and session type. Kill individual or bulk-kill by filter. Session count trend chart.</div><div class="dir-cat">CMC Tabs</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">🖥️</div><div><div class="dir-name">Servers</div><div class="dir-desc">All BO server nodes with status, type, enabled state, and active connection count. Start / stop / restart individual servers. Filter by type or state.</div><div class="dir-cat">CMC Tabs</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">📁</div><div><div class="dir-name">Folders</div><div class="dir-desc">Full folder tree browser. Create, rename, delete, move folders. View folder sizes and report counts. Set permissions from the folder view.</div><div class="dir-cat">CMC Tabs</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">📊</div><div><div class="dir-name">Reports</div><div class="dir-desc">Master report list. Filter by type, owner, folder, and last-run status. Bulk operations: delete, move, copy, export metadata to Excel.</div><div class="dir-cat">CMC Tabs</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">📺</div><div><div class="dir-name">Report Viewer</div><div class="dir-desc">Unified viewer for all BO report types. WebI: run/refresh/export PDF·Excel·CSV/schedule. Crystal: open in Launchpad, export. AO: download, schedule. Split list + action panel.</div><div class="dir-cat">CMC Tabs</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">▶️</div><div><div class="dir-name">Report Interaction</div><div class="dir-desc">Select any report, fill in prompt values interactively, and submit to run. Results shown with job ID and status. View instances after run.</div><div class="dir-cat">CMC Tabs</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">🌐</div><div><div class="dir-name">Universes</div><div class="dir-desc">Universe list with connection, last modified, and size. View linked reports and connections. Delete with impact check.</div><div class="dir-cat">CMC Tabs</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">🔌</div><div><div class="dir-name">Connections</div><div class="dir-desc">Relational connection list. Test, view properties, delete. See which universes and reports use each connection.</div><div class="dir-cat">CMC Tabs</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">🔷</div><div><div class="dir-name">OLAP Connections</div><div class="dir-desc">OLAP / BW / MDX connection list. Test selected, filter by type, refresh. For BW/HANA OLAP connections that don't require a universe.</div><div class="dir-cat">CMC Tabs</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">🔗</div><div><div class="dir-name">BW Connections</div><div class="dir-desc">Dedicated SAP BW → BO manager. Test all connections, browse BEx Queries and InfoProviders, create/edit/delete. Health summary with live status dots.</div><div class="dir-cat">CMC Tabs</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">🌍</div><div><div class="dir-name">Connection Manager</div><div class="dir-desc">Unified manager for all 4 source types: SAP BW (BICS/MDX), HANA OLAP (Calc Views), HANA Relational (via universe), S/4HANA, Non-SAP (Oracle/SQL Server/MySQL/DB2). Type-aware create forms.</div><div class="dir-cat">CMC Tabs</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">📋</div><div><div class="dir-name">Instance Manager</div><div class="dir-desc">All report instances across all reports. Filter by status, date, owner. Bulk-delete or bulk-retry. View output files.</div><div class="dir-cat">CMC Tabs</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">⚡</div><div><div class="dir-name">Bulk Ops</div><div class="dir-desc">Multi-select any CMS objects and perform bulk move, copy, delete, owner change, or schedule operations in one action.</div><div class="dir-cat">CMC Tabs</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">📅</div><div><div class="dir-name">Scheduling</div><div class="dir-desc">View all active and paused schedules. Edit recurrence, output format, destination, parameters. Pause / resume / delete schedules in bulk.</div><div class="dir-cat">CMC Tabs</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">🪪</div><div><div class="dir-name">Licenses</div><div class="dir-desc">View current SAP BO licence metrics: named users, concurrent access, used vs allocated. Detect over-licensing or approaching limits.</div><div class="dir-cat">CMC Tabs</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">📝</div><div><div class="dir-name">Audit</div><div class="dir-desc">Query the audit database: user actions, object changes, schedule events, logon/logoff history. Filter by event type, user, date range. Export to Excel.</div><div class="dir-cat">CMC Tabs</div></div></div>
+      <div class="dir-card reveal"><div class="dir-icon">⚙️</div><div><div class="dir-name">Settings</div><div class="dir-desc">Configure BO Commander: BO server host/port/auth, AI API key, theme, startup behaviour, notification preferences, and export defaults.</div><div class="dir-cat">Settings</div></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ── ABOUT / DEVELOPER PROFILE ─────────────────────────────────────────────── -->
+<section class="section" id="about">
+  <div class="section-inner">
+    <span class="section-tag reveal">The Developer</span>
+    <h2 class="section-title reveal">Meet the builder</h2>
+    <p class="section-sub reveal">Every feature in BO Commander came from real-world pain points administering enterprise SAP BO environments — built by a practitioner, for practitioners.</p>
+
+    <div class="author-card reveal">
+      <div class="author-avatar">ST</div>
+      <div class="author-info">
+        <h3>Sai Teja Guddanti</h3>
+        <div class="author-role">SAP BO &amp; DS Admin &nbsp;·&nbsp; Developer &nbsp;·&nbsp; Gen AI &nbsp;·&nbsp; Bug Bounty Hunter &nbsp;·&nbsp; Front-End Developer</div>
+
+        <div class="skill-pills">
+          <span class="skill-pill"><span class="s-dot" style="background:#22d3ee"></span>SAP BusinessObjects</span>
+          <span class="skill-pill"><span class="s-dot" style="background:#3b82f6"></span>SAP Data Services</span>
+          <span class="skill-pill"><span class="s-dot" style="background:#6366f1"></span>Generative AI</span>
+          <span class="skill-pill"><span class="s-dot" style="background:#ef4444"></span>Bug Bounty Hunting</span>
+          <span class="skill-pill"><span class="s-dot" style="background:#10b981"></span>Front-End Dev</span>
+          <span class="skill-pill"><span class="s-dot" style="background:#f59e0b"></span>Python</span>
+          <span class="skill-pill"><span class="s-dot" style="background:#a855f7"></span>REST API Integration</span>
+        </div>
+
+        <p style="font-size:14px;color:var(--text2);line-height:1.7;max-width:560px;margin-bottom:18px;">
+          Designed and built BO Commander to solve the real frustrations of SAP BO administration —
+          slow CMC, no bulk operations, zero visibility into health, and hours wasted on repetitive tasks.
+          Every page, every CMS query, and every AI integration is drawn from production experience
+          across multiple enterprise environments.
+        </p>
+
+        <div class="author-links">
+          <a href="mailto:saitejaguddanti999@gmail.com" class="author-link">✉ saitejaguddanti999@gmail.com</a>
+          <a href="https://www.linkedin.com/in/sai-teja-628082288" class="author-link" target="_blank">🔗 LinkedIn — sai-teja-628082288</a>
+          <a href="https://github.com" class="author-link" target="_blank">⌥ GitHub</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── FAQ / Q&A ─────────────────────────────────────────────────────────────── -->
+<section class="section" id="faq" style="background:var(--bg2);">
+  <div class="section-inner">
+    <span class="section-tag reveal">FAQ</span>
+    <h2 class="section-title reveal">Frequently Asked Questions</h2>
+    <p class="section-sub reveal">
+      Facing an issue or want to understand how something works?
+      Can't find your answer? <a href="mailto:saitejaguddanti999@gmail.com" style="color:var(--cyan);text-decoration:none;">Reach out directly →</a>
+    </p>
+
+    <div class="qa-list">
+
+      <div class="qa-item reveal">
+        <div class="qa-q" onclick="toggleQA(this)">
+          <span class="qa-q-text">The app launches but shows 0 everywhere — is it working?</span>
+          <span class="qa-arrow">›</span>
+        </div>
+        <div class="qa-a">
+          <p>Yes — this is correct on an empty BO environment. Every page queries your live CMS, so if there are no reports or instances yet, you'll see zeros. Try <strong>Users</strong> or <strong>Servers</strong> first — those will always have data if you're connected.</p>
+          <p style="margin-top:8px;">If you see zeros on Servers too, check that <code>BO_HOST</code>, <code>BO_PORT</code>, <code>BO_USERNAME</code>, and <code>BO_PASSWORD</code> in your <code>.env</code> file are correct, and that port 6405 is reachable from your machine.</p>
+        </div>
+      </div>
+
+      <div class="qa-item reveal">
+        <div class="qa-q" onclick="toggleQA(this)">
+          <span class="qa-q-text">Where do I get a Gemini API key and where do I put it?</span>
+          <span class="qa-arrow">›</span>
+        </div>
+        <div class="qa-a">
+          <p>Get a free key from <a href="https://makersuite.google.com/app/apikey" target="_blank">Google AI Studio</a>. The free tier (Gemini 1.5 Flash) is enough for normal admin use. Then add this line to your <code>.env</code> file:</p>
+          <p style="margin-top:8px;"><code>GEMINI_API_KEY=AIzaSy...your_key_here</code></p>
+          <p style="margin-top:8px;">Without a key, all non-AI features (reports, users, servers, connections, etc.) still work normally — only AI Sentinel, AI Assistant, and Self Healing require it.</p>
+        </div>
+      </div>
+
+      <div class="qa-item reveal">
+        <div class="qa-q" onclick="toggleQA(this)">
+          <span class="qa-q-text">My license expired after 30 days. How do I renew?</span>
+          <span class="qa-arrow">›</span>
+        </div>
+        <div class="qa-a">
+          <p>License keys are valid for <strong>30 days</strong>. When expired, the activation dialog reappears on next launch. To renew:</p>
+          <ul>
+            <li>Email <a href="mailto:saitejaguddanti999@gmail.com">saitejaguddanti999@gmail.com</a> with your name and machine hostname</li>
+            <li>Or message on <a href="https://www.linkedin.com/in/sai-teja-628082288" target="_blank">LinkedIn</a></li>
+          </ul>
+          <p style="margin-top:8px;">Renewal is <strong>free</strong> and fast — usually same-day. Entering the new key resets your 30-day clock from today.</p>
+        </div>
+      </div>
+
+      <div class="qa-item reveal">
+        <div class="qa-q" onclick="toggleQA(this)">
+          <span class="qa-q-text">Which SAP BO versions does this support?</span>
+          <span class="qa-arrow">›</span>
+        </div>
+        <div class="qa-a">
+          <p>BO Commander is tested against SAP BO BI Platform 4.x (4.1 through 4.4). The REST API and CMS query syntax is consistent across all 4.x versions. Some REST endpoints (like <code>/connections/{id}/test</code>) may not exist on older versions — when that happens the tool automatically falls back to a CMS lookup rather than failing.</p>
+        </div>
+      </div>
+
+      <div class="qa-item reveal">
+        <div class="qa-q" onclick="toggleQA(this)">
+          <span class="qa-q-text">Is it safe to use on a production BO server?</span>
+          <span class="qa-arrow">›</span>
+        </div>
+        <div class="qa-a">
+          <p><strong>Read operations</strong> (browsing reports, users, sessions, running CMS queries, viewing connections) are 100% read-only and safe in production.</p>
+          <p style="margin-top:8px;"><strong>Write operations</strong> that modify data are always clearly labelled and require confirmation: Delete, Bulk Delete, Run/Refresh Report, Create Connection, Kill Session, Restart Server. Never perform these without reviewing the impact first.</p>
+        </div>
+      </div>
+
+      <div class="qa-item reveal">
+        <div class="qa-q" onclick="toggleQA(this)">
+          <span class="qa-q-text">How do I connect to SAP BW, HANA, or S/4HANA?</span>
+          <span class="qa-arrow">›</span>
+        </div>
+        <div class="qa-a">
+          <p>Use the <strong>BW Connections</strong> or <strong>Connection Manager</strong> page in the sidebar. BO Commander handles all 4 source types:</p>
+          <ul>
+            <li><strong>SAP BW</strong> — OLAP (BICS / MDX) — no universe needed, direct InfoProvider &amp; BEx Query access</li>
+            <li><strong>SAP HANA OLAP</strong> — Calculation Views with Star Join — no universe needed</li>
+            <li><strong>SAP HANA Relational</strong> — via JDBC/ODBC, universe required</li>
+            <li><strong>S/4HANA</strong> — BW Query, HANA Calc View, or CDS View</li>
+            <li><strong>Non-SAP</strong> — Oracle, SQL Server, MySQL, PostgreSQL, DB2, Teradata</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="qa-item reveal">
+        <div class="qa-q" onclick="toggleQA(this)">
+          <span class="qa-q-text">The AI Assistant gave me wrong advice — what should I do?</span>
+          <span class="qa-arrow">›</span>
+        </div>
+        <div class="qa-a">
+          <p>AI can and does make mistakes. <strong>Always verify AI-suggested actions</strong> before applying them — especially server restarts, bulk deletes, or schema changes. The AI disclaimer is intentionally prominent in the tool.</p>
+          <p style="margin-top:8px;">If you get a consistently wrong or harmful answer, report it to <a href="mailto:saitejaguddanti999@gmail.com">saitejaguddanti999@gmail.com</a> with the question and response — this helps improve the guardrails.</p>
+        </div>
+      </div>
+
+      <!-- .exe startup question removed as per request -->
+
+      <div class="qa-item reveal">
+        <div class="qa-q" onclick="toggleQA(this)">
+          <span class="qa-q-text">Can I request a new feature?</span>
+          <span class="qa-arrow">›</span>
+        </div>
+        <div class="qa-a">
+          <p>Absolutely. BO Commander is actively developed based on real admin needs. Email <a href="mailto:saitejaguddanti999@gmail.com">saitejaguddanti999@gmail.com</a> or message on <a href="https://www.linkedin.com/in/sai-teja-628082288" target="_blank">LinkedIn</a> with:</p>
+          <ul>
+            <li>What you want to do</li>
+            <li>Which BO version / OS you're running on</li>
+            <li>How urgent / how often you need it</li>
+          </ul>
+          <p style="margin-top:8px;">High-demand requests are prioritised for the next release.</p>
+        </div>
+      </div>
+
+      <div class="qa-item reveal">
+        <div class="qa-q" onclick="toggleQA(this)">
+          <span class="qa-q-text">Is my BO password stored securely?</span>
+          <span class="qa-arrow">›</span>
+        </div>
+        <div class="qa-a">
+          <p>Credentials are stored in the <code>.env</code> file on your local machine — standard practice for desktop admin tools. The file is never uploaded or transmitted anywhere by BO Commander. Ensure your Windows user account is the only one with read access to the <code>.env</code> file.</p>
+          <p style="margin-top:8px;">For a passwordless setup, leave <code>BO_PASSWORD</code> empty — the login dialog will prompt for it each time without saving to disk.</p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ── CONTACT / REACH OUT ────────────────────────────────────────────────────── -->
+<section class="section" id="contact">
+  <div class="section-inner">
+    <div class="cta-box reveal">
+      <h2>Facing an issue?<br /><span>Need a new or advanced feature?</span></h2>
+      <p>
+        BO Commander is actively maintained and expanded. Whether you've hit a bug,
+        need a feature built for your specific environment, need help with setup,
+        or just want to renew your license — every message is read personally.
+      </p>
+      <div class="cta-btns">
+        <a href="mailto:saitejaguddanti999@gmail.com" class="cta-btn primary">
+          ✉ &nbsp;saitejaguddanti999@gmail.com
+        </a>
+        <a href="https://www.linkedin.com/in/sai-teja-628082288" target="_blank" class="cta-btn ghost">
+          🔗 &nbsp;LinkedIn — Sai Teja Guddanti
+        </a>
+      </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── FOOTER ────────────────────────────────────────────────────────────────── -->
+<footer>
+  <div class="footer-left">
+    <strong>BO Commander</strong> v1.0.0 &nbsp;·&nbsp;
+    Built by Sai Teja Guddanti &nbsp;·&nbsp;
+    © 2025 All rights reserved
+  </div>
+  <div class="footer-links">
+    <a href="mailto:saitejaguddanti999@gmail.com">saitejaguddanti999@gmail.com</a>
+    <a href="https://www.linkedin.com/in/sai-teja-628082288" target="_blank">LinkedIn</a>
+    <a href="https://github.com" target="_blank">GitHub</a>
+  </div>
+  <div class="footer-right">⚠ AI features may make mistakes — verify all</div>
+</footer>
+
+<script>
+  function toggleQA(element) {
+    const qaItem = element.closest('.qa-item');
+    qaItem.classList.toggle('open');
+  }
+
+  // Reveal animations on scroll (simple)
+  const reveals = document.querySelectorAll('.reveal');
+  window.addEventListener('scroll', function() {
+    for (let i = 0; i < reveals.length; i++) {
+      const windowHeight = window.innerHeight;
+      const revealTop = reveals[i].getBoundingClientRect().top;
+      const revealPoint = 150;
+      if (revealTop < windowHeight - revealPoint) {
+        reveals[i].classList.add('visible');
+      }
+    }
+  });
+  // Trigger once on load
+  window.dispatchEvent(new Event('scroll'));
+</script>
+
+<!-- The Cloudflare email protection script is not needed; it may cause console errors but not blank page. -->
+</body>
+</html>

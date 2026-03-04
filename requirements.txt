@@ -1,0 +1,32 @@
+# --- GUI & UX ---
+customtkinter>=5.2.0
+pillow>=10.0.0
+tkinterdnd2>=0.3.0
+
+# --- SAP BO & NETWORK ---
+requests>=2.31.0
+urllib3>=2.0.0
+
+# --- DATABASE (Audit DB Integration) ---
+pyodbc>=5.0.1
+
+# --- SECURITY (Password Encryption) ---
+cryptography>=41.0.0
+
+# --- AI INTEGRATION (Gemini) ---
+google-generativeai>=0.3.0
+
+# --- DATA & VISUALIZATION (Performance Graphs & Bulk Ops) ---
+matplotlib>=3.8.0
+pandas>=2.1.0
+openpyxl>=3.1.2
+
+# --- UTILITIES & MONITORING ---
+python-dotenv>=1.0.0
+psutil>=5.9.0
+loguru>=0.7.0
+setuptools>=65.5.0
+
+# --- WINDOWS NOTIFICATIONS ---
+win10toast-persist>=0.10.1
+win11toast>=0.3.4
