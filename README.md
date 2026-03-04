@@ -1,10 +1,3 @@
-Your current README is **too weak**. It doesn’t explain the tool, show features, or help someone run it. If a recruiter or SAP admin opens the repo, they’ll leave in 5 seconds.
-
-Use a **structured README** like this.
-
-Paste this into `README.md`.
-
----
 
 # BO Commander
 
