@@ -1,578 +1,406 @@
 """
-bo_commander.py  -  BO Commander v1.0.0
+bo_commander.py  —  BO Commander v2.0
 Intelligent SAP BusinessObjects Control Center
+15-Tab Architecture + MultiBOT AI Agent (Phase 1 Production)
 
 Developed by : Sai Teja Guddanti
 Contact      : saitejaguddanti999@gmail.com
 LinkedIn     : https://www.linkedin.com/in/sai-teja-628082288
+© 2025 Sai Teja Guddanti. All rights reserved.
 
-Single-file entry point. No external license_manager or license_dialog needed.
-Banner + license check + activation dialog are all embedded in this file.
+FIXES IN THIS VERSION
+  FIX-1  LoginPage crash  — removed illegal 'master=' keyword arg
+  FIX-2  Tab import safety — missing/broken tab file never kills the whole app
+  FIX-3  Tab caching       — each tab built once and reused (faster nav)
+  FIX-4  Windows DPI       — sharp rendering on 4K / high-DPI monitors
+  FIX-5  Clean shutdown    — monitor + bo_session stopped gracefully on exit
+  FIX-6  Sidebar info      — shows logged-in user + host after login
 """
-import sys, os, json, threading, hashlib, platform, socket, webbrowser
-from datetime import date, datetime
+
+import sys
+import threading
+import logging
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
+logger = logging.getLogger("BOCommander")
+
+# ──────────────────────────────────────────────────────────────────────────────
 # SETTINGS
-# ---------------------------------------------------------------------------
-MASTER_KEY   = "BOCMD-25STG-ADMIN-XKEY9"   # the key you give to users
-WEB_PORT     = 8765
-AUTO_BROWSER = False
-DOCS_DIR     = Path(__file__).parent / "docs"
-
-DEV_NAME     = "Sai Teja Guddanti"
-DEV_EMAIL    = "saitejaguddanti999@gmail.com"
-DEV_LINKEDIN = "https://www.linkedin.com/in/sai-teja-628082288"
-VERSION      = "1.0.0"
-LICENSE_FILE = Path.home() / ".bocommander" / "license.json"
+# ──────────────────────────────────────────────────────────────────────────────
+WEB_PORT = 8765
+DOCS_DIR = Path(__file__).parent / "docs"
+VERSION  = "2.0"
 
 
-# ---------------------------------------------------------------------------
-# LICENSE  (inline, no external module)
-# ---------------------------------------------------------------------------
-
-def _lic_load():
-    try:
-        if LICENSE_FILE.exists():
-            return json.loads(LICENSE_FILE.read_text())
-    except Exception:
-        pass
-    return {}
-
-
-def _lic_save(data):
-    try:
-        LICENSE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        LICENSE_FILE.write_text(json.dumps(data, indent=2))
-    except Exception:
-        pass
-
-
-def _validate_key(key):
-    clean = key.strip().upper().replace("-", "")
-    return clean == MASTER_KEY.upper().replace("-", "")
-
-
-def is_activated():
-    """Returns (activated: bool, user_name: str)"""
-    d = _lic_load()
-    return d.get("activated", False), d.get("user_name", "")
-
-
-def _do_activate(user_name, entered_key):
-    """Returns (success: bool, message: str)"""
-    if not _validate_key(entered_key):
-        return False, ("Invalid license key.\n\n"
-                       "Please contact the developer to get a valid key:\n"
-                       + DEV_EMAIL)
-    _lic_save({
-        "activated":    True,
-        "user_name":    user_name.strip() or "Unknown",
-        "key":          entered_key.strip().upper(),
-        "activated_on": str(date.today()),
-        "version":      VERSION,
-    })
-    return True, "License activated! Welcome, " + user_name.strip() + "."
-
-
-# ---------------------------------------------------------------------------
-# BANNER
-# ---------------------------------------------------------------------------
-
-def _print_banner(activated=False, user_name=""):
-    CY = "\033[96m"; BL = "\033[94m"; GR = "\033[92m"
-    YL = "\033[93m"; WH = "\033[97m"; GY = "\033[90m"
-    BD = "\033[1m";  RS = "\033[0m"
-    SEP = GY + "-" * 98 + RS
-    print()
-    print(CY + BD)
-    print("  BO COMMANDER  v" + VERSION + "  |  Intelligent SAP BusinessObjects Control Center")
-    print("  AI-Powered Administration, Monitoring, Diagnostics, Security, Housekeeping")
-    print(RS)
-    print(SEP)
-    print()
-    print("  " + YL + BD + "Developed by:" + RS)
-    print("    " + WH + BD + DEV_NAME + RS)
-    print("    " + BL + "Email    : " + DEV_EMAIL + RS)
-    print("    " + CY + "LinkedIn : " + DEV_LINKEDIN + RS)
-    print("    " + GY + "(c) 2025 " + DEV_NAME + ". All rights reserved." + RS)
-    print()
-    print("  " + YL + BD + "License:" + RS)
-    if activated and user_name:
-        print("    " + GR + "ACTIVATED  -  registered to: " + WH + BD + user_name + RS)
-    else:
-        print("    " + YL + "Trial Mode  -  activate when prompted" + RS)
-    print()
-    print("  " + YL + BD + "System:" + RS)
-    print("    " + GY + "OS   : " + WH + platform.system() + " " + platform.release() + RS)
-    print("    " + GY + "Host : " + WH + socket.gethostname() + RS)
-    print("    " + GY + "Time : " + WH + datetime.now().strftime("%Y-%m-%d  %H:%M:%S") + RS)
-    print()
-    print(SEP)
-    print("  " + CY + "  Loading GUI ..." + RS)
-    print("  " + BL + "  Product info : http://localhost:" + str(WEB_PORT) + RS)
-    print("  " + YL + "  AI may make mistakes - always verify critical actions." + RS)
-    print(SEP)
-    print()
-
-
-# ---------------------------------------------------------------------------
-# LICENSE DIALOG  (inline CTk dialog, no external module)
-# ---------------------------------------------------------------------------
-
-def _show_license_dialog():
-    """
-    Shows license activation dialog.
-    Returns (activated: bool, user_name: str).
-    Calls sys.exit(0) if user closes without activating.
-    """
-    import customtkinter as ctk
-
-    C_BG   = "#080e17"
-    C_BG2  = "#0d1824"
-    C_BORD = "#1a2e42"
-    C_CYN  = "#22d3ee"
-    C_RED  = "#ef4444"
-    C_GRY  = "#8fafc8"
-    C_WHT  = "#e2eaf4"
-
-    result = {"ok": False, "name": ""}
-    closed = {"v": False}
-
-    ctk.set_appearance_mode("Dark")
-    ctk.set_default_color_theme("blue")
-
-    root = ctk.CTk()
-    root.withdraw()
-
-    dlg = ctk.CTkToplevel(root)
-    dlg.title("BO Commander - License Activation")
-    dlg.geometry("520x630")
-    dlg.resizable(False, False)
-    dlg.configure(fg_color=C_BG)
-    dlg.grab_set()
-    dlg.lift()
-    dlg.focus_force()
-
-    def _on_close():
-        closed["v"] = True
-        root.quit()
-    dlg.protocol("WM_DELETE_WINDOW", _on_close)
-
-    dlg.update_idletasks()
-    sw = dlg.winfo_screenwidth()
-    sh = dlg.winfo_screenheight()
-    dlg.geometry("520x630+" + str((sw-520)//2) + "+" + str((sh-630)//2))
-
-    P = {"padx": 40}
-
-    ctk.CTkLabel(dlg, text="BO Commander",
-                 font=("Courier New", 28, "bold"),
-                 text_color=C_CYN).pack(pady=(38, 4))
-    ctk.CTkLabel(dlg, text="v" + VERSION + "  |  Intelligent SAP BO Control Center",
-                 font=("Segoe UI", 12), text_color=C_GRY).pack()
-
-    ctk.CTkFrame(dlg, height=1, fg_color=C_BORD).pack(fill="x", padx=40, pady=22)
-
-    ctk.CTkLabel(dlg, text="License Activation",
-                 font=("Segoe UI", 16, "bold"),
-                 text_color=C_WHT).pack(**P, anchor="w")
-    ctk.CTkLabel(dlg,
-                 text="Enter the license key provided by the developer.",
-                 font=("Segoe UI", 12), text_color=C_GRY,
-                 justify="left").pack(**P, anchor="w", pady=(4, 0))
-
-    ctk.CTkLabel(dlg, text="Your Name",
-                 font=("Segoe UI", 12), text_color=C_GRY).pack(**P, anchor="w", pady=(18, 0))
-    name_e = ctk.CTkEntry(dlg, height=42, placeholder_text="e.g. John Smith",
-                           font=("Segoe UI", 13),
-                           fg_color=C_BG2, border_color=C_BORD, text_color=C_WHT)
-    name_e.pack(fill="x", **P, pady=(4, 0))
-
-    ctk.CTkLabel(dlg, text="License Key",
-                 font=("Segoe UI", 12), text_color=C_GRY).pack(**P, anchor="w", pady=(14, 0))
-    key_e = ctk.CTkEntry(dlg, height=42,
-                          placeholder_text="BOCMD-XXXXX-XXXXX-XXXXX",
-                          font=("Courier New", 14),
-                          fg_color=C_BG2, border_color=C_BORD, text_color=C_CYN)
-    key_e.pack(fill="x", **P, pady=(4, 0))
-
-    msg_lbl = ctk.CTkLabel(dlg, text="", font=("Segoe UI", 11),
-                            text_color=C_RED, wraplength=440, justify="left")
-    msg_lbl.pack(**P, anchor="w", pady=(8, 0))
-
-    def _submit():
-        name = name_e.get().strip()
-        key  = key_e.get().strip()
-        if not key:
-            msg_lbl.configure(text="Please enter your license key.", text_color=C_RED)
-            return
-        if not name:
-            msg_lbl.configure(text="Please enter your name.", text_color=C_RED)
-            return
-        btn.configure(state="disabled", text="Validating...")
-        dlg.update()
-        ok, msg = _do_activate(name, key)
-        if ok:
-            result["ok"]   = True
-            result["name"] = name
-            msg_lbl.configure(text="Activated! Loading...", text_color="#22c55e")
-            btn.configure(text="Activated!")
-            dlg.after(900, root.quit)
-        else:
-            msg_lbl.configure(text=msg, text_color=C_RED)
-            btn.configure(state="normal", text="Activate BO Commander")
-
-    key_e.bind("<Return>", lambda e: _submit())
-
-    btn = ctk.CTkButton(dlg, text="Activate BO Commander",
-                         height=46, corner_radius=8,
-                         font=("Segoe UI", 14, "bold"),
-                         fg_color=C_CYN, text_color=C_BG,
-                         hover_color="#06b6d4",
-                         command=_submit)
-    btn.pack(fill="x", **P, pady=(14, 0))
-
-    ctk.CTkFrame(dlg, height=1, fg_color=C_BORD).pack(fill="x", padx=40, pady=18)
-
-    ctk.CTkLabel(dlg, text="No key?  Contact the developer:",
-                 font=("Segoe UI", 11), text_color=C_GRY).pack()
-    ctk.CTkLabel(dlg, text=DEV_EMAIL,
-                 font=("Segoe UI", 12, "bold"), text_color=C_CYN).pack(pady=(2, 0))
-    ctk.CTkLabel(dlg, text=DEV_LINKEDIN,
-                 font=("Segoe UI", 11), text_color=C_GRY).pack(pady=(2, 10))
-
-    root.mainloop()
-
-    if closed["v"] or not result["ok"]:
-        print("\nActivation cancelled. Exiting.")
-        sys.exit(0)
-
-    try:
-        root.destroy()
-    except Exception:
-        pass
-
-    return result["ok"], result["name"]
-
-
-# ---------------------------------------------------------------------------
-# WEB SERVER
-# ---------------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# PRODUCT INFO WEB SERVER  →  http://localhost:8765
+# ──────────────────────────────────────────────────────────────────────────────
 def _start_web_server():
-    """Serve the docs folder on localhost:WEB_PORT in a daemon thread."""
-    import http.server, socketserver, os
+    """Serve docs/ at http://localhost:8765"""
+    import http.server, socketserver
     if not DOCS_DIR.exists():
         return
 
-    class _Handler(http.server.SimpleHTTPRequestHandler):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, directory=str(DOCS_DIR), **kwargs)
-        def log_message(self, fmt, *args):
-            pass  # Suppress HTTP access logs
+    class _H(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, directory=str(DOCS_DIR), **kw)
+        def log_message(self, *a):
+            pass
 
     def _serve():
         try:
-            with socketserver.TCPServer(("", WEB_PORT), _Handler) as httpd:
-                httpd.serve_forever()
+            with socketserver.TCPServer(("", WEB_PORT), _H) as h:
+                h.serve_forever()
         except OSError:
-            pass  # Port already in use — ignore
+            pass
 
     threading.Thread(target=_serve, daemon=True).start()
 
 
-# ── GUI bootstrap ─────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# SAFE TAB IMPORT — one bad file never crashes the whole app
+# ──────────────────────────────────────────────────────────────────────────────
+def _safe_import(module_path: str, class_name: str):
+    """Import a tab class. Returns a friendly error placeholder on failure."""
+    try:
+        import importlib
+        mod = importlib.import_module(module_path)
+        return getattr(mod, class_name)
+    except Exception as exc:
+        logger.error(f"Tab import failed  [{module_path}.{class_name}]: {exc}")
+
+        import customtkinter as ctk
+
+        _err = str(exc)
+        _mod = module_path
+        _cls = class_name
+
+        class _Fallback(ctk.CTkFrame):
+            def __init__(self, master, **kw):
+                super().__init__(master, fg_color="#0F172A", **kw)
+                self.grid_columnconfigure(0, weight=1)
+                self.grid_rowconfigure(0, weight=1)
+                box = ctk.CTkFrame(self, fg_color="#1E293B", corner_radius=14)
+                box.grid(padx=60, pady=60, sticky="nsew")
+                box.grid_columnconfigure(0, weight=1)
+                ctk.CTkLabel(box, text="⚠  Tab Failed to Load",
+                             font=("Segoe UI", 20, "bold"),
+                             text_color="#EF4444").grid(pady=(28, 6))
+                ctk.CTkLabel(box, text=f"{_mod}.{_cls}",
+                             font=("Consolas", 11),
+                             text_color="#94A3B8").grid(pady=(0, 8))
+                tb = ctk.CTkTextbox(box, width=700, height=120,
+                                     fg_color="#0F172A", text_color="#F59E0B",
+                                     font=("Consolas", 10))
+                tb.grid(padx=20, pady=4)
+                tb.insert("end", _err)
+                tb.configure(state="disabled")
+                ctk.CTkLabel(box,
+                             text="Fix the error in the file listed above and restart BO Commander.",
+                             font=("Segoe UI", 10), text_color="#64748B").grid(pady=(8, 24))
+
+        return _Fallback
 
 
-# ---------------------------------------------------------------------------
-# GUI  (all pages - unchanged)
-# ---------------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# GUI
+# ──────────────────────────────────────────────────────────────────────────────
 def launch_gui():
+
+    # ── Windows DPI (must run before any Tk window opens) ────────────────────
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        try:
+            import ctypes
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
     import customtkinter as ctk
-    import ctypes
     from config import Config
-    from gui.pages.login import LoginPage
     from core.sapbo_connection import bo_session
-    from core.monitoring import SystemMonitor
-    from ai.sentinel_agent import SentinelAgent
-    from gui.pages.dashboard             import DashboardPage
-    from gui.pages.users                 import UsersPage
-    from gui.pages.servers               import ServersPage
-    from gui.pages.reports               import ReportsPage
-    from gui.pages.audit                 import AuditPage
-    from gui.pages.folders               import FoldersPage
-    from gui.pages.bulk_ops              import BulkOpsPage
-    from gui.pages.universes             import UniversesPage
-    from gui.pages.connections           import ConnectionsPage
-    from gui.pages.instance_manager      import InstanceManagerPage
-    from gui.pages.authentication        import AuthenticationPage
-    from gui.pages.license_keys          import LicenseKeysPage
-    from gui.pages.promotion             import PromotionPage
-    from gui.pages.versioning            import VersioningPage
-    from gui.pages.scheduling            import SchedulingPage
-    from gui.pages.publishing            import PublishingPage
-    from gui.pages.sessions              import SessionsPage
-    from gui.pages.log_analyzer          import LogAnalyzerPage
-    from gui.pages.sentinel              import SentinelPage
-    from gui.pages.settings              import SettingsPage
-    from gui.pages.report_viewer         import ReportViewerPage
-    from gui.pages.system_monitor        import SystemMonitorPage
-    from gui.pages.security_analyzer     import SecurityAnalyzerPage
-    from gui.pages.cleanup_hub           import CleanupHubPage
-    from gui.pages.query_builder         import QueryBuilderPage
-    from gui.pages.dependency_resolver   import DependencyResolverPage
-    from gui.pages.instance_cleanup      import InstanceCleanupPage
-    from gui.pages.failed_schedules      import FailedSchedulesPage
-    from gui.pages.user_activity         import UserActivityPage
-    from gui.pages.server_health         import ServerHealthPage
-    from gui.pages.broken_reports        import BrokenReportsPage
-    from gui.pages.housekeeping          import HousekeepingPage
-    from gui.pages.ai_assistant          import AIAssistantPage
-    from gui.pages.applications          import ApplicationsPage
-    from gui.pages.broken_objects        import BrokenObjectsPage
-    from gui.pages.deep_search           import DeepSearchPage
-    from gui.pages.health_heatmap        import HealthHeatmapPage
-    from gui.pages.impact_analysis       import ImpactAnalysisPage
-    from gui.pages.instance_deep_control import InstanceDeepControlPage
-    from gui.pages.log_correlation       import LogCorrelationPage
-    from gui.pages.metadata_view         import MetadataViewPage
-    from gui.pages.notifications         import NotificationsPage
-    from gui.pages.olap_connections      import OLAPConnectionsPage
-    from gui.pages.promotion_resolver    import PromotionResolverPage
-    from gui.pages.recycle_bin           import RecycleBinPage
-    from gui.pages.report_interaction    import ReportInteractionPage
-    from gui.pages.self_healing          import SelfHealingPage
-    from gui.pages.services              import ServicesPage
-    from gui.pages.web_services          import WebServicesPage
-    from gui.pages.sso_tester            import SSOTesterPage
-    from gui.pages.ldap_sync_monitor     import LDAPSyncMonitorPage
-    from gui.pages.repository_diagnostic import RepositoryDiagnosticPage
+
+    # Optional heavy modules — safe fallback if missing
+    SystemMonitor = None
+    try:
+        from core.monitoring import SystemMonitor
+    except Exception as e:
+        logger.warning(f"SystemMonitor unavailable: {e}")
+
+    SentinelAgent = None
+    try:
+        from ai.sentinel_agent import SentinelAgent
+    except Exception as e:
+        logger.warning(f"SentinelAgent unavailable: {e}")
+
+    # Login page — required, crash hard if missing
+    from gui.pages.login import LoginPage
+
+    # ── 15 Tabs (safe imports) ────────────────────────────────────────────────
+    TABS = [
+        ("🏠  Dashboard",      _safe_import("gui.tabs.tab_dashboard",       "DashboardTab")),
+        ("🤖  MultiBOT",       _safe_import("gui.tabs.tab_multibot",        "MultiBOTTab")),
+        ("🖥  Servers",        _safe_import("gui.tabs.tab_servers",         "ServersTab")),
+        ("👥  Users",          _safe_import("gui.tabs.tab_users",           "UsersTab")),
+        ("🔐  Security",       _safe_import("gui.tabs.tab_security",        "SecurityTab")),
+        ("📊  Reports",        _safe_import("gui.tabs.tab_reports",         "ReportsTab")),
+        ("🌐  Universes",      _safe_import("gui.tabs.tab_universes",       "UniversesTab")),
+        ("📅  Scheduling",     _safe_import("gui.tabs.tab_scheduling",      "SchedulingTab")),
+        ("🔄  Promotion",      _safe_import("gui.tabs.tab_promotion",       "PromotionTab")),
+        ("🗄  Repository",     _safe_import("gui.tabs.tab_repository",      "RepositoryTab")),
+        ("📋  Logs",           _safe_import("gui.tabs.tab_logs",            "LogsTab")),
+        ("🔗  Dependencies",   _safe_import("gui.tabs.tab_dependencies",    "DependenciesTab")),
+        ("📡  Monitoring",     _safe_import("gui.tabs.tab_monitoring",      "MonitoringTab")),
+        ("🧹  Housekeeping",   _safe_import("gui.tabs.tab_housekeeping",    "HousekeepingTab")),
+        ("🔍  Query Builder",  _safe_import("gui.tabs.tab_query_builder",   "QueryBuilderTab")),
+        ("🧹  Cleanup",        _safe_import("gui.tabs.tab_cleanup",         "CleanupTab")),
+        ("⚙  Settings",       _safe_import("gui.tabs.tab_settings",        "SettingsTab")),
+    ]
 
     ctk.set_appearance_mode("Dark")
     ctk.set_default_color_theme("blue")
+    C = Config.COLORS
 
+    # ──────────────────────────────────────────────────────────────────────────
     class BOCommanderApp(ctk.CTk):
+
         def __init__(self):
             super().__init__()
-            self.monitor  = None
-            self.sentinel = SentinelAgent(ui_callback=self.refresh_sentinel_page)
-            self.title(f"{Config.APP_NAME} v{Config.VERSION}")
-            self.geometry("1450x950")
-            self.minsize(1100, 750)
-            self.protocol("WM_DELETE_WINDOW", self.on_close)
-            self.show_login()
+            self.title(f"{Config.APP_NAME}  v{VERSION}  |  AI-Powered SAP BO Control Center")
+            self.geometry("1500x960")
+            self.minsize(1200, 780)
+            self.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        def on_close(self):
-            if self.monitor: self.monitor.stop()
+            self._monitor  = None
+            self._sentinel = None
+            self._tab_cache: dict = {}
+            self._user_name = ""
+
+            if SentinelAgent:
+                try:
+                    self._sentinel = SentinelAgent(ui_callback=lambda: None)
+                except Exception as e:
+                    logger.warning(f"SentinelAgent init: {e}")
+
+            self._show_login()
+
+        # ── Lifecycle ─────────────────────────────────────────────────────────
+        def _on_close(self):
+            self._stop_bg()
+            try:
+                bo_session.logout()
+            except Exception:
+                pass
             self.destroy()
 
-        def show_login(self):
-            for w in self.winfo_children(): w.destroy()
-            self.login_page = LoginPage(self, self.on_login_success, self.sentinel)
+        def _stop_bg(self):
+            if self._monitor:
+                try:
+                    self._monitor.stop()
+                except Exception:
+                    pass
+                self._monitor = None
 
-        def on_login_success(self):
-            self.login_page.destroy()
-            self.grid_rowconfigure(0, weight=1)
-            self.grid_columnconfigure(1, weight=1)
-            self.setup_sidebar()
-            self.setup_main_area()
-            self.update_connection_status()
-            self.monitor = SystemMonitor(self.sentinel)
-            self.monitor.start()
-            self.select_page("Dashboard")
+        def _clear(self):
+            for w in self.winfo_children():
+                try:
+                    w.destroy()
+                except Exception:
+                    pass
 
-        def refresh_sentinel_page(self):
-            if hasattr(self, "page_title") and self.page_title.cget("text") == "AI Sentinel":
-                self.select_page("AI Sentinel")
+        # ── Login ─────────────────────────────────────────────────────────────
+        def _show_login(self):
+            self._clear()
+            self._tab_cache.clear()
 
-        def setup_sidebar(self):
-            self.sidebar_frame = ctk.CTkScrollableFrame(
-                self, width=260, corner_radius=0,
-                fg_color=Config.COLORS["bg_secondary"])
-            self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
-
-            ctk.CTkLabel(self.sidebar_frame, text=Config.APP_NAME,
-                         font=Config.FONTS["header"]).pack(pady=(25, 5))
-            ctk.CTkLabel(self.sidebar_frame, text=Config.TAGLINE,
-                         font=Config.FONTS["small"],
-                         text_color=Config.COLORS["text_secondary"]).pack(pady=(0, 20))
-
-            self.nav_buttons = {}
-            menus = [
-                "Dashboard", "AI Sentinel", "\U0001f514 Notifications",
-                "--- AI TOOLS ---",
-                "AI Assistant", "Self Healing", "Health Heatmap",
-                "--- POWER TOOLS ---",
-                "Security Scanner", "\U0001f5a5  System Monitor", "Orphan Purge",
-                "Query Builder", "Dep. Resolver", "Instance Cleanup",
-                "Failed Schedules", "User Activity", "Server Health",
-                "Broken Reports", "Housekeeping", "Broken Objects",
-                "Deep Search", "Impact Analysis", "Log Correlation",
-                "Instance Deep Control", "Promotion Resolver",
-                "--- DIAGNOSTICS ---",
-                "SSO Tester", "LDAP Sync Monitor", "Repo Diagnostic",
-                "--- CMC TABS ---",
-                "Users", "Sessions", "Servers", "Folders", "Reports",
-                "Report Viewer", "Report Interaction", "Universes",
-                "Connections", "OLAP Connections", "Instance Manager",
-                "Bulk Ops", "Log Analyzer", "Scheduling", "Promotion",
-                "Versioning", "Publishing", "Authentication", "Licenses",
-                "Audit", "Applications", "Services", "Web Services",
-                "Recycle Bin", "Metadata View", "Settings",
-            ]
-            for m in menus:
-                if m.startswith("---"):
-                    ctk.CTkLabel(self.sidebar_frame, text=m,
-                                 font=("Segoe UI", 10, "bold"),
-                                 text_color="gray").pack(pady=(15, 5))
-                    continue
-                btn = ctk.CTkButton(
-                    self.sidebar_frame, text=m, height=38, corner_radius=8,
-                    fg_color="transparent",
-                    text_color=Config.COLORS["text_secondary"],
-                    hover_color=Config.COLORS["bg_tertiary"],
-                    anchor="w",
-                    command=lambda x=m: self.select_page(x))
-                btn.pack(fill="x", padx=15, pady=2)
-                self.nav_buttons[m] = btn
-
-            ctk.CTkButton(self.sidebar_frame, text="Log Out",
-                          fg_color=Config.COLORS["danger"],
-                          hover_color="#DC2626",
-                          command=self.logout).pack(pady=40, padx=20)
-
-        def setup_main_area(self):
-            self.main_frame = ctk.CTkFrame(self, corner_radius=0,
-                                           fg_color=Config.COLORS["bg_primary"])
-            self.main_frame.grid(row=0, column=1, sticky="nsew")
-            top_bar = ctk.CTkFrame(self.main_frame, height=70, fg_color="transparent")
-            top_bar.pack(side="top", fill="x", padx=35, pady=25)
-            self.page_title = ctk.CTkLabel(top_bar, text="Dashboard",
-                                           font=Config.FONTS["sub_header"],
-                                           text_color=Config.COLORS["text_primary"])
-            self.page_title.pack(side="left")
-            self.conn_status = ctk.CTkLabel(top_bar, text="\u25cf Connected",
-                                            font=Config.FONTS["small"],
-                                            text_color=Config.COLORS["success"])
-            self.conn_status.pack(side="right")
-            self.content_area = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-            self.content_area.pack(side="top", fill="both", expand=True, padx=35, pady=5)
-
-        def select_page(self, page_name):
-            for name, btn in self.nav_buttons.items():
-                btn.configure(fg_color="transparent",
-                               text_color=Config.COLORS["text_secondary"])
-            if page_name in self.nav_buttons:
-                self.nav_buttons[page_name].configure(
-                    fg_color=Config.COLORS["bg_tertiary"],
-                    text_color=Config.COLORS["primary"])
-            self.page_title.configure(text=page_name)
-            for w in self.content_area.winfo_children(): w.destroy()
-
-            pages = {
-                "Dashboard":              lambda: DashboardPage(self.content_area),
-                "AI Sentinel":            lambda: SentinelPage(self.content_area, agent=self.sentinel),
-                "\U0001f514 Notifications": lambda: NotificationsPage(self.content_area),
-                "AI Assistant":           lambda: AIAssistantPage(self.content_area),
-                "Self Healing":           lambda: SelfHealingPage(self.content_area),
-                "Health Heatmap":         lambda: HealthHeatmapPage(self.content_area),
-                "Security Scanner":       lambda: SecurityAnalyzerPage(self.content_area),
-                "\U0001f5a5  System Monitor": lambda: SystemMonitorPage(self.content_area),
-                "Orphan Purge":           lambda: CleanupHubPage(self.content_area),
-                "Query Builder":          lambda: QueryBuilderPage(self.content_area),
-                "Dep. Resolver":          lambda: DependencyResolverPage(self.content_area),
-                "Instance Cleanup":       lambda: InstanceCleanupPage(self.content_area),
-                "Failed Schedules":       lambda: FailedSchedulesPage(self.content_area),
-                "User Activity":          lambda: UserActivityPage(self.content_area),
-                "Server Health":          lambda: ServerHealthPage(self.content_area),
-                "Broken Reports":         lambda: BrokenReportsPage(self.content_area),
-                "Housekeeping":           lambda: HousekeepingPage(self.content_area),
-                "Broken Objects":         lambda: BrokenObjectsPage(self.content_area),
-                "Deep Search":            lambda: DeepSearchPage(self.content_area),
-                "Impact Analysis":        lambda: ImpactAnalysisPage(self.content_area),
-                "Log Correlation":        lambda: LogCorrelationPage(self.content_area),
-                "Instance Deep Control":  lambda: InstanceDeepControlPage(self.content_area),
-                "Promotion Resolver":     lambda: PromotionResolverPage(self.content_area),
-                "SSO Tester":             lambda: SSOTesterPage(self.content_area),
-                "LDAP Sync Monitor":      lambda: LDAPSyncMonitorPage(self.content_area),
-                "Repo Diagnostic":        lambda: RepositoryDiagnosticPage(self.content_area),
-                "Users":                  lambda: UsersPage(self.content_area),
-                "Sessions":               lambda: SessionsPage(self.content_area),
-                "Servers":                lambda: ServersPage(self.content_area),
-                "Folders":                lambda: FoldersPage(self.content_area),
-                "Reports":                lambda: ReportsPage(self.content_area),
-                "Report Viewer":          lambda: ReportViewerPage(self.content_area),
-                "Report Interaction":     lambda: ReportInteractionPage(self.content_area),
-                "Universes":              lambda: UniversesPage(self.content_area),
-                "Connections":            lambda: ConnectionsPage(self.content_area),
-                "OLAP Connections":       lambda: OLAPConnectionsPage(self.content_area),
-                "Instance Manager":       lambda: InstanceManagerPage(self.content_area),
-                "Bulk Ops":               lambda: BulkOpsPage(self.content_area),
-                "Log Analyzer":           lambda: LogAnalyzerPage(self.content_area),
-                "Scheduling":             lambda: SchedulingPage(self.content_area),
-                "Promotion":              lambda: PromotionPage(self.content_area),
-                "Versioning":             lambda: VersioningPage(self.content_area),
-                "Publishing":             lambda: PublishingPage(self.content_area),
-                "Authentication":         lambda: AuthenticationPage(self.content_area),
-                "Licenses":               lambda: LicenseKeysPage(self.content_area),
-                "Audit":                  lambda: AuditPage(self.content_area),
-                "Applications":           lambda: ApplicationsPage(self.content_area),
-                "Services":               lambda: ServicesPage(self.content_area),
-                "Web Services":           lambda: WebServicesPage(self.content_area),
-                "Recycle Bin":            lambda: RecycleBinPage(self.content_area),
-                "Metadata View":          lambda: MetadataViewPage(self.content_area),
-                "Settings":               lambda: SettingsPage(self.content_area),
+            # ✅ FIX-1: parent passed positionally — LoginPage(self, ...)
+            #            NOT LoginPage(master=self, ...) which caused the crash
+            # ✅ FIX-7: sentinel_agent is a required arg in LoginPage — always pass it
+            #            (pass None when SentinelAgent failed to load)
+            kw = {
+                "on_success":     self._on_login_success,
+                "sentinel_agent": self._sentinel,   # None when unavailable
             }
-            builder = pages.get(page_name)
-            if builder:
-                builder().pack(fill="both", expand=True)
-            else:
-                ctk.CTkLabel(self.content_area,
-                             text=f"{page_name} — Coming Soon",
-                             font=Config.FONTS["header"]).pack(expand=True)
 
-        def update_connection_status(self):
-            if bo_session.connected:
-                host = bo_session.cms_details.get("host", "Unknown")
-                user = bo_session.cms_details.get("user", "Unknown")
-                self.conn_status.configure(
-                    text=f"\u25cf Connected to {host} ({user})",
-                    text_color=Config.COLORS["success"])
-            else:
-                self.conn_status.configure(text="\u25cf Disconnected",
-                                           text_color=Config.COLORS["danger"])
+            LoginPage(self, **kw).pack(fill="both", expand=True)
+
+        def _on_login_success(self):
+            try:
+                self._user_name = bo_session.cms_details.get("user", "")
+            except Exception:
+                self._user_name = ""
+
+            self._clear()
+
+            if SystemMonitor:
+                try:
+                    # FIX: SystemMonitor may require sentinel_agent as first arg
+                    try:
+                        self._monitor = SystemMonitor(self._sentinel)
+                    except TypeError:
+                        self._monitor = SystemMonitor()
+                    self._monitor.start()
+                except Exception as e:
+                    logger.warning(f"Monitor start: {e}")
+
+            self._build_main()
 
         def logout(self):
-            if self.monitor: self.monitor.stop()
-            bo_session.logout()
-            self.show_login()
+            self._stop_bg()
+            try:
+                bo_session.logout()
+            except Exception:
+                pass
+            self._tab_cache.clear()
+            self._show_login()
 
+        # ── Main shell ────────────────────────────────────────────────────────
+        def _build_main(self):
+            self.configure(fg_color=C["bg_primary"])
+            self.grid_columnconfigure(1, weight=1)
+            self.grid_rowconfigure(0, weight=1)
+
+            # ── Sidebar ───────────────────────────────────────────────────────
+            sb = ctk.CTkFrame(self, width=230, corner_radius=0,
+                               fg_color=C["bg_secondary"])
+            sb.grid(row=0, column=0, sticky="nsew")
+            sb.grid_propagate(False)
+
+            # Brand
+            hdr = ctk.CTkFrame(sb, fg_color=C["primary"], height=72, corner_radius=0)
+            hdr.pack(fill="x")
+            hdr.pack_propagate(False)
+            ctk.CTkLabel(hdr, text="⚡  BO Commander",
+                         font=("Segoe UI", 16, "bold"),
+                         text_color="white").pack(pady=(14, 0))
+            ctk.CTkLabel(hdr, text=f"v{VERSION}  ·  AI-Powered",
+                         font=("Segoe UI", 9),
+                         text_color="#bfdbfe").pack()
+
+            # User info
+            info = ctk.CTkFrame(sb, fg_color=C["bg_tertiary"],
+                                 corner_radius=8)
+            info.pack(fill="x", padx=10, pady=(10, 4))
+            user = self._user_name or "Administrator"
+            host = bo_session.cms_details.get("host", "—")
+            ctk.CTkLabel(info, text=f"👤  {user}",
+                         font=("Segoe UI", 10, "bold"),
+                         text_color=C["text_primary"],
+                         anchor="w").pack(fill="x", padx=8, pady=(6, 0))
+            ctk.CTkLabel(info, text=f"🖧  {host}",
+                         font=("Segoe UI", 9),
+                         text_color=C["text_secondary"],
+                         anchor="w").pack(fill="x", padx=8, pady=(0, 6))
+
+            # Connection status
+            self._conn_lbl = ctk.CTkLabel(
+                sb, text="●  Connected",
+                font=("Segoe UI", 10, "bold"),
+                text_color=C["success"]
+            )
+            self._conn_lbl.pack(pady=(2, 6))
+
+            # Nav
+            nav = ctk.CTkScrollableFrame(sb, fg_color="transparent",
+                                          scrollbar_button_color=C["bg_tertiary"])
+            nav.pack(fill="both", expand=True, padx=6)
+
+            self._nav_btns = {}
+            for label, _ in TABS:
+                btn = ctk.CTkButton(
+                    nav, text=label, height=38, corner_radius=8,
+                    anchor="w", font=("Segoe UI", 11),
+                    fg_color="transparent",
+                    text_color=C["text_secondary"],
+                    hover_color=C["bg_tertiary"],
+                    command=lambda l=label: self._select_tab(l)
+                )
+                btn.pack(fill="x", pady=1)
+                self._nav_btns[label] = btn
+
+            # Logout
+            ctk.CTkFrame(sb, fg_color=C["bg_tertiary"], height=1
+                          ).pack(fill="x", padx=8, pady=4)
+            ctk.CTkButton(
+                sb, text="⏻  Log Out", height=36,
+                fg_color=C["danger"], hover_color="#dc2626",
+                font=("Segoe UI", 11, "bold"),
+                command=self.logout
+            ).pack(fill="x", padx=8, pady=(0, 4))
+
+            ctk.CTkLabel(sb,
+                         text=f"BO Commander v{VERSION}  ·  Phase 1",
+                         font=("Segoe UI", 8),
+                         text_color=C["bg_tertiary"]
+                         ).pack(pady=(0, 8))
+
+            # ── Content ───────────────────────────────────────────────────────
+            self._content = ctk.CTkFrame(self, corner_radius=0,
+                                          fg_color=C["bg_primary"])
+            self._content.grid(row=0, column=1, sticky="nsew")
+            self._content.grid_columnconfigure(0, weight=1)
+            self._content.grid_rowconfigure(0, weight=1)
+
+            self._select_tab(TABS[0][0])   # open Dashboard
+
+        # ── Tab switch + caching ──────────────────────────────────────────────
+        def _select_tab(self, label: str):
+            # Update nav highlight
+            for l, btn in self._nav_btns.items():
+                active = (l == label)
+                btn.configure(
+                    fg_color=C["bg_tertiary"] if active else "transparent",
+                    text_color=C["primary"]   if active else C["text_secondary"]
+                )
+
+            # ✅ FIX-3: Hide all cached tabs instead of destroying them
+            for cached in self._tab_cache.values():
+                try:
+                    cached.grid_forget()
+                except Exception:
+                    pass
+
+            # Build on first visit, reuse after
+            if label not in self._tab_cache:
+                tab_cls = next((cls for l, cls in TABS if l == label), None)
+                if tab_cls is None:
+                    return
+                try:
+                    tab = tab_cls(self._content)
+                except Exception as exc:
+                    logger.error(f"Tab init crash [{label}]: {exc}")
+                    tab = ctk.CTkFrame(self._content, fg_color=C["bg_primary"])
+                    ctk.CTkLabel(
+                        tab,
+                        text=f"❌  {label} crashed on load\n\n{exc}",
+                        font=("Segoe UI", 12),
+                        text_color=C["danger"],
+                        justify="center"
+                    ).pack(expand=True)
+                self._tab_cache[label] = tab
+
+            self._tab_cache[label].grid(row=0, column=0, sticky="nsew")
+
+    # ── Launch ────────────────────────────────────────────────────────────────
     app = BOCommanderApp()
     app.mainloop()
 
 
-# ---------------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
 # ENTRY POINT
-# ---------------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-
-    # 1. Check saved activation
-    activated, user_name = is_activated()
-
-    # 2. If not activated, show dialog
-    if not activated:
-        activated, user_name = _show_license_dialog()
-
-    # 3. Print banner
-    _print_banner(activated=activated, user_name=user_name)
-
-    # 4. Start docs web server
     _start_web_server()
 
-    # 5. Auto-browser (optional)
-    if AUTO_BROWSER:
-        threading.Timer(1.5, lambda: webbrowser.open("http://localhost:" + str(WEB_PORT))).start()
+    try:
+        from core.banner import print_banner
+        print_banner()
+    except Exception:
+        pass
 
-    # 6. Launch GUI
+    print(f"    📖  Product info & features → http://localhost:{WEB_PORT}")
+    print(f"    ⚠   AI tools may make mistakes — verify critical actions before applying.\n")
+
     launch_gui()

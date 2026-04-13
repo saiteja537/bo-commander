@@ -1,15 +1,20 @@
 """
-gui/pages/ai_assistant.py
-Enhanced AI Assistant:
-  - SAP BO domain-only: rejects non-BO questions with a polite message
-  - Richer system prompt with BO expertise (admin, troubleshooting, best practices)
-  - Live BO context injected from existing sapbo_connection methods (no new methods needed)
-  - Chat history (last 6 turns sent for context)
-  - Suggested quick-action buttons
-  - No 8-layer scan triggered
+gui/pages/ai_assistant.py  —  BO Commander AI Assistant  v2.0
+Production-grade SAP BO expert chat with:
+  • Live system context snapshot (servers, failures, stats)
+  • Conversation memory (last 8 turns)
+  • Copy-to-clipboard per message
+  • Timestamp on every bubble
+  • Quick-prompt library organised by category
+  • AI engine status indicator
+  • Export full chat to text file
 """
 
 import threading
+import time
+from datetime import datetime
+from tkinter import filedialog
+
 import customtkinter as ctk
 from config import Config
 from ai.gemini_client import ai_client
@@ -18,255 +23,411 @@ from core.sapbo_connection import bo_session
 C = Config.COLORS
 F = Config.FONTS
 
-# ── SAP BO domain detection ────────────────────────────────────────────────────
-BO_KEYWORDS = {
-    'sap', 'bo', 'bobj', 'businessobjects', 'business objects', 'webi', 'web intelligence',
-    'crystal', 'xcelsius', 'dashboard', 'lumira', 'universe', 'unv', 'unx', 'bex', 'bics',
-    'cms', 'cmc', 'bi launchpad', 'bilaunchpad', 'opendocument', 'fiorbi', 'auditing',
-    'server', 'tomcat', 'wacs', 'aps', 'sia', 'cms', 'job server', 'connection server',
-    'event server', 'adaptive', 'schedule', 'instance', 'publication', 'report',
-    'session', 'license', 'promotion', 'lcm', 'lifecycle', 'security', 'authentication',
-    'enterprise', 'ldap', 'ad', 'active directory', 'sso', 'saml', 'heap', 'memory',
-    'jvm', 'java', 'log', 'trace', 'glf', 'error', 'failed', 'performance', 'cache',
-    'cluster', 'node', 'patch', 'upgrade', 'install', 'pam', 'support', 'connection',
-    'database', 'odbc', 'jdbc', 'data source', 'metadata', 'folder', 'inbox', 'recycle',
-    'user', 'group', 'role', 'rights', 'access level', 'principal', 'token',
+# ── palette ───────────────────────────────────────────────────────────────────
+BG0   = C["bg_primary"]
+BG1   = C["bg_secondary"]
+BG2   = C["bg_tertiary"]
+CYAN  = "#22d3ee"
+BLUE  = C["primary"]
+VIOLET= C["secondary"]
+GREEN = C["success"]
+AMBER = C["warning"]
+RED   = C["danger"]
+TEXT  = C["text_primary"]
+TEXT2 = C["text_secondary"]
+
+# ── domain keywords ───────────────────────────────────────────────────────────
+_BO_KW = {
+    'sap','bo','bobj','businessobjects','business objects','webi','web intelligence',
+    'crystal','xcelsius','dashboard','lumira','universe','unv','unx','bex','bics',
+    'cms','cmc','bi launchpad','bilaunchpad','opendocument','auditing',
+    'tomcat','wacs','aps','sia','job server','connection server','event server',
+    'adaptive','schedule','instance','publication','report','session','license',
+    'promotion','lcm','lifecycle','security','authentication','enterprise',
+    'ldap','active directory','sso','saml','heap','memory','jvm','java',
+    'log','trace','glf','error','failed','performance','cache','cluster',
+    'node','patch','upgrade','install','pam','support','connection','database',
+    'odbc','jdbc','data source','metadata','folder','inbox','recycle',
+    'user','group','role','rights','access level','token','server',
 }
 
-BO_SYSTEM_PROMPT = """You are an expert SAP BusinessObjects (SAP BO / BOBJ) administrator AI assistant 
-embedded inside BO Commander — a desktop administration tool.
+_SYSTEM_PROMPT = """You are an expert SAP BusinessObjects (SAP BO / BOBJ) BI platform administrator AI, \
+embedded inside BO Commander — an enterprise administration tool running on SAP BO BI 4.3.
 
-YOUR EXPERTISE COVERS:
-- SAP BO platform: CMS, Tomcat/WACS, APS, Job Server, Connection Server, Event Server, SIA
-- BI Launchpad, CMC (Central Management Console) administration  
-- Web Intelligence (Webi), Crystal Reports, Xcelsius/Dashboards, Analysis for Office (AO)
-- Universes (UNV/UNX), connections (ODBC/JDBC/BICS/OLAP), metadata management
-- User security: Enterprise, LDAP, AD, SAML/SSO authentication
-- Scheduling, publishing, promotions, Lifecycle Management (LCM)
-- Performance tuning: JVM heap sizing, connection pooling, CMS database optimization
-- Troubleshooting: OutOfMemoryError, connection refused, failed instances, corrupt reports
-- SAP BO versions 4.1, 4.2, 4.3, 4.4 — PAM compatibility, patch levels, support packs
-- Monitoring: server metrics, audit database, log files (GLF, trace, GC logs)
-- BO Commander tool features: Sentinel, Self Healing, Housekeeping, Security Scanner
+EXPERTISE:
+- Platform: CMS, Tomcat/WACS, APS, Job Server, Connection Server, Event Server, SIA nodes
+- BI Launchpad, CMC administration, user/group security
+- Web Intelligence (Webi), Crystal Reports, Analysis for Office (AO), Xcelsius/Dashboards
+- Universes (UNV/UNX), ODBC/JDBC/BICS/OLAP connections, metadata management
+- Security: Enterprise, LDAP, AD, SAML/SSO/Kerberos authentication
+- Scheduling, publishing, LCM promotions, lifecycle management
+- Performance: JVM heap, connection pooling, CMS DB tuning, Tomcat thread pool
+- Troubleshooting: OOM, connection refused, failed instances, corrupt reports, cert errors
+- Versions 4.1 / 4.2 / 4.3 / 4.4 — PAM matrix, SPs, patches, hotfixes
+- Log analysis: GLF, trace, catalina.out, GC logs, SI_PROCESSINFO
 
 RULES:
-1. Answer ONLY SAP BO related questions
-2. If asked about something unrelated to SAP BO, politely decline and redirect
-3. Be specific and practical — give real SQL queries, config values, file paths when relevant
-4. If you reference a config file path, use Windows paths (this is a Windows BO install)
-5. Always consider the live BO context if provided
-
-RESPONSE FORMAT:
-- Use plain text (no markdown bold/headers — this is a chat UI)
-- Be concise but complete
-- For step-by-step fixes, number the steps
-- Include specific values (port numbers, file paths, heap sizes) when helpful
+1. Answer ONLY SAP BO / BOBJ related questions.
+2. Reject unrelated questions politely and redirect to BO topics.
+3. Be specific: give real SQL, exact file paths (Windows), port numbers, config values.
+4. Number steps for procedures. Short paragraphs for explanations.
+5. When live system context is provided, refer to it for specific advice.
+6. Plain text only — no markdown asterisks or headers. This is a desktop chat UI.
 """
 
-QUICK_PROMPTS = [
-    ("🔧 Fix OOM Error",        "My Tomcat is throwing OutOfMemoryError. How do I fix it?"),
-    ("📊 Slow Reports",         "Reports are running slowly. What should I check and tune?"),
-    ("🔐 LDAP Setup",           "How do I configure LDAP authentication in SAP BO 4.3?"),
-    ("🗃 CMS DB Tuning",        "How do I optimize the CMS database for better performance?"),
-    ("📅 Schedule Fails",       "My scheduled reports keep failing. How do I troubleshoot?"),
-    ("🔄 Restart Order",        "What is the correct order to restart all SAP BO services?"),
+_QUICK = [
+    ("Administration", [
+        ("👥 User Sync",       "How do I synchronise LDAP users into SAP BO 4.3?"),
+        ("🔐 SSO SAML",        "How do I configure SAML SSO for SAP BO BI 4.3?"),
+        ("📦 LCM Promote",     "How do I promote objects between environments using LCM?"),
+        ("🗓 Schedule Audit",  "How do I audit all scheduled reports and their owners?"),
+    ]),
+    ("Performance", [
+        ("💾 JVM Heap",        "My Tomcat has OutOfMemoryError. How do I size JVM heap?"),
+        ("🐌 Slow Reports",    "Reports are slow. What are the top performance tuning steps?"),
+        ("🗃 CMS DB",          "How do I optimise the CMS database (MSSQL)?"),
+        ("🔄 Connection Pool", "How do I tune JDBC connection pooling in SAP BO?"),
+    ]),
+    ("Troubleshooting", [
+        ("❌ Failed Instances", "My scheduled reports keep failing. How do I troubleshoot?"),
+        ("🚫 Service Down",     "The CMS service won't start. What are the common causes?"),
+        ("🔌 DB Connect Fail",  "WebI reports get 'Database connection failed'. How to fix?"),
+        ("🌐 Launchpad 500",    "BI Launchpad shows HTTP 500. What do I check?"),
+    ]),
 ]
 
 
-def _is_bo_related(text: str) -> bool:
-    """Check if the user's question is related to SAP BO."""
+def _is_bo(text: str) -> bool:
     t = text.lower()
-    return any(kw in t for kw in BO_KEYWORDS)
+    return any(kw in t for kw in _BO_KW)
+
+
+class _Bubble(ctk.CTkFrame):
+    """Single chat message bubble with timestamp + copy button."""
+    def __init__(self, parent, text: str, role: str, ts: str):
+        super().__init__(parent, fg_color="transparent")
+        is_user = role == "user"
+        wrap = 660
+
+        outer = ctk.CTkFrame(self,
+                              fg_color=BLUE  if is_user else BG2,
+                              corner_radius=12)
+        outer.pack(anchor="e" if is_user else "w",
+                   padx=(60 if is_user else 0, 0 if is_user else 60))
+
+        # message text
+        ctk.CTkLabel(outer, text=text, wraplength=wrap, justify="left",
+                     text_color=TEXT, font=("Segoe UI", 12),
+                     anchor="w", padx=14, pady=10).pack(fill="x")
+
+        # footer: timestamp + copy
+        foot = ctk.CTkFrame(outer, fg_color="transparent", height=22)
+        foot.pack(fill="x", padx=10, pady=(0, 6))
+        ctk.CTkLabel(foot, text=ts, font=("Segoe UI", 9),
+                     text_color=TEXT2).pack(side="left")
+        ctk.CTkButton(foot, text="⎘ Copy", width=56, height=18,
+                      font=("Segoe UI", 9), fg_color="transparent",
+                      text_color=TEXT2, hover_color=BG1,
+                      command=lambda: self._copy(text)).pack(side="right")
+
+        self._text = text
+
+    def _copy(self, text):
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+        except Exception:
+            pass
 
 
 class AIAssistantPage(ctk.CTkFrame):
 
     def __init__(self, parent):
-        super().__init__(parent, fg_color=C['bg_primary'], corner_radius=0)
-        self._history = []
+        super().__init__(parent, fg_color=BG0, corner_radius=0)
+        self._history  = []   # [(role, text), ...]
         self._thinking = None
+        self._destroyed = False
+        self._build()
+        self._load_context_async()
 
-        # ── header ────────────────────────────────────────────────────────────
-        top = ctk.CTkFrame(self, fg_color='transparent', height=60)
-        top.pack(fill='x', padx=20, pady=(15, 0))
-        top.pack_propagate(False)
+    def destroy(self):
+        self._destroyed = True
+        super().destroy()
 
-        icon_f = ctk.CTkFrame(top, fg_color=C['primary'], width=44, height=44, corner_radius=10)
-        icon_f.pack(side='left')
+    # ── build layout ──────────────────────────────────────────────────────────
+    def _build(self):
+        # ── header bar ────────────────────────────────────────────────────────
+        hdr = ctk.CTkFrame(self, fg_color=BG1, corner_radius=0, height=60)
+        hdr.pack(fill="x")
+        hdr.pack_propagate(False)
+
+        icon_f = ctk.CTkFrame(hdr, fg_color=BLUE, width=40, height=40, corner_radius=10)
+        icon_f.pack(side="left", padx=(16,10))
         icon_f.pack_propagate(False)
-        ctk.CTkLabel(icon_f, text='🤖', font=('Segoe UI', 22)).place(relx=.5, rely=.5, anchor='center')
+        ctk.CTkLabel(icon_f, text="🤖", font=("Segoe UI", 20)
+                     ).place(relx=.5, rely=.5, anchor="center")
 
-        ctk.CTkLabel(top, text='AI Assistant',
-                     font=('Segoe UI', 20, 'bold'),
-                     text_color=C['text_primary']).pack(side='left', padx=12)
+        ctk.CTkLabel(hdr, text="AI Assistant",
+                     font=("Segoe UI", 18, "bold"),
+                     text_color=TEXT).pack(side="left")
+        ctk.CTkLabel(hdr, text="  SAP BO Expert · Gemini",
+                     font=("Segoe UI", 10), text_color=TEXT2).pack(side="left")
 
-        ctk.CTkLabel(top, text='SAP BO Expert · Powered by Gemini',
-                     font=('Segoe UI', 10),
-                     text_color=C['text_secondary']).pack(side='left')
-
-        ctk.CTkButton(top, text='🗑 Clear', width=70, height=28,
-                      fg_color=C['bg_tertiary'], text_color=C['text_primary'],
-                      command=self._clear).pack(side='right')
+        # right controls
+        ctk.CTkButton(hdr, text="⬇ Export Chat", width=110, height=30,
+                      fg_color=BG2, text_color=TEXT2, font=F["small"],
+                      hover_color=BG0, command=self._export).pack(side="right", padx=8)
+        ctk.CTkButton(hdr, text="🗑 Clear", width=74, height=30,
+                      fg_color=BG2, text_color=TEXT2, font=F["small"],
+                      hover_color=BG0, command=self._clear).pack(side="right")
 
         self._ctx_var = ctk.BooleanVar(value=True)
-        ctk.CTkCheckBox(top, text='Include live BO context',
+        ctk.CTkCheckBox(hdr, text="Live context",
                         variable=self._ctx_var,
-                        font=('Segoe UI', 11),
-                        text_color=C['text_secondary']).pack(side='right', padx=10)
+                        font=("Segoe UI", 10), text_color=TEXT2,
+                        checkbox_width=16, checkbox_height=16
+                        ).pack(side="right", padx=10)
 
-        # ── quick prompts ─────────────────────────────────────────────────────
-        qrow = ctk.CTkFrame(self, fg_color='transparent')
-        qrow.pack(fill='x', padx=20, pady=(8, 0))
-        ctk.CTkLabel(qrow, text='Quick questions:',
-                     font=('Segoe UI', 10), text_color=C['text_secondary']).pack(side='left')
-        for label, prompt in QUICK_PROMPTS:
-            ctk.CTkButton(qrow, text=label, height=26, width=130,
-                          font=('Segoe UI', 9),
-                          fg_color=C['bg_tertiary'],
-                          hover_color=C['primary'],
-                          text_color=C['text_primary'],
-                          command=lambda p=prompt: self._quick_send(p)
-                          ).pack(side='left', padx=3)
+        # ── context status strip ───────────────────────────────────────────────
+        self._ctx_strip = ctk.CTkFrame(self, fg_color=BG2, corner_radius=0, height=28)
+        self._ctx_strip.pack(fill="x")
+        self._ctx_strip.pack_propagate(False)
+        self._ctx_lbl = ctk.CTkLabel(self._ctx_strip,
+                                      text="⏳  Loading live BO context…",
+                                      font=("Segoe UI", 10), text_color=TEXT2)
+        self._ctx_lbl.pack(side="left", padx=14)
+        self._ctx_dot = ctk.CTkLabel(self._ctx_strip, text="●",
+                                      font=("Segoe UI", 12), text_color=AMBER)
+        self._ctx_dot.pack(side="right", padx=14)
 
-        # ── chat area ─────────────────────────────────────────────────────────
-        self.chat = ctk.CTkScrollableFrame(self, fg_color=C['bg_secondary'], corner_radius=8)
-        self.chat.pack(fill='both', expand=True, padx=20, pady=8)
+        # ── quick prompts ──────────────────────────────────────────────────────
+        qbar = ctk.CTkFrame(self, fg_color=BG1, height=38)
+        qbar.pack(fill="x", padx=0, pady=0)
+        qbar.pack_propagate(False)
+
+        ctk.CTkLabel(qbar, text="Quick:", font=("Segoe UI", 9, "bold"),
+                     text_color=TEXT2).pack(side="left", padx=(12,6))
+
+        self._quick_tab = ctk.StringVar(value=_QUICK[0][0])
+        for cat, _ in _QUICK:
+            ctk.CTkButton(qbar, text=cat, height=24, width=110,
+                          font=("Segoe UI", 9),
+                          fg_color=BLUE if cat == _QUICK[0][0] else BG2,
+                          hover_color=BLUE, text_color=TEXT,
+                          command=lambda c=cat: self._switch_cat(c)
+                          ).pack(side="left", padx=2)
+
+        self._prompt_row = ctk.CTkFrame(self, fg_color=BG2, height=34)
+        self._prompt_row.pack(fill="x")
+        self._prompt_row.pack_propagate(False)
+        self._render_prompts(_QUICK[0][0])
+
+        # ── chat scroll area ───────────────────────────────────────────────────
+        self._chat = ctk.CTkScrollableFrame(self, fg_color=BG1, corner_radius=0)
+        self._chat.pack(fill="both", expand=True, padx=0, pady=0)
 
         # ── input bar ─────────────────────────────────────────────────────────
-        bar = ctk.CTkFrame(self, fg_color=C['bg_secondary'], corner_radius=10, height=55)
-        bar.pack(fill='x', padx=20, pady=(0, 15))
-        bar.pack_propagate(False)
-        bar.grid_columnconfigure(0, weight=1)
+        inp = ctk.CTkFrame(self, fg_color=BG1, corner_radius=0, height=58)
+        inp.pack(fill="x", padx=0, pady=0)
+        inp.pack_propagate(False)
+        inp.grid_columnconfigure(0, weight=1)
 
-        self.entry = ctk.CTkEntry(bar, placeholder_text='Ask anything about SAP BusinessObjects…',
-                                  fg_color='transparent', border_width=0,
-                                  font=('Segoe UI', 12), text_color=C['text_primary'])
-        self.entry.grid(row=0, column=0, sticky='ew', padx=(15, 5), pady=10)
-        self.entry.bind('<Return>', self._send)
+        self._entry = ctk.CTkEntry(
+            inp,
+            placeholder_text="Ask anything about SAP BusinessObjects…",
+            fg_color=BG2, border_color=BG2,
+            text_color=TEXT, font=("Segoe UI", 13))
+        self._entry.grid(row=0, column=0, sticky="ew", padx=(14,8), pady=10)
+        self._entry.bind("<Return>", self._send)
 
-        self._send_btn = ctk.CTkButton(bar, text='Send ↵', width=80, height=34,
-                                       font=('Segoe UI', 11, 'bold'), command=self._send)
-        self._send_btn.grid(row=0, column=1, padx=(0, 10))
+        self._send_btn = ctk.CTkButton(
+            inp, text="Send  ↵", width=90, height=36,
+            font=("Segoe UI", 12, "bold"),
+            fg_color=BLUE, hover_color="#2563eb",
+            command=self._send)
+        self._send_btn.grid(row=0, column=1, padx=(0, 12))
 
-        # welcome
+        # welcome bubble
         self._add_bubble(
-            "Hello! I'm your SAP BO AI Assistant.\n\n"
-            "I specialise in:\n"
-            "  • Troubleshooting: OOM errors, failed services, connection issues\n"
-            "  • Administration: users, security, scheduling, promotions\n"
-            "  • Performance: JVM tuning, CMS DB optimisation, caching\n"
+            "Hello! I'm your SAP BO AI Assistant — connected to your live BI 4.3 system.\n\n"
+            "I can help with:\n"
+            "  • Troubleshooting: OOM, failed services, broken connections\n"
+            "  • Administration: users, security, LDAP/SSO, scheduling\n"
+            "  • Performance: JVM tuning, CMS DB, report speed\n"
             "  • Versions 4.1 / 4.2 / 4.3 / 4.4 — PAM, patches, upgrades\n\n"
-            "Note: I only answer SAP BusinessObjects questions.",
-            role='ai'
+            "I only answer SAP BusinessObjects questions. "
+            "Use the quick prompts above to get started.",
+            role="ai",
         )
 
-    # ── bubble ────────────────────────────────────────────────────────────────
+    # ── quick prompt UI ───────────────────────────────────────────────────────
+    def _switch_cat(self, cat):
+        self._quick_tab.set(cat)
+        # Update button colours
+        for w in self._prompt_row.master.winfo_children():
+            pass  # handled via re-render
+        self._render_prompts(cat)
 
-    def _add_bubble(self, text, role='ai'):
-        is_user = role == 'user'
-        row = ctk.CTkFrame(self.chat, fg_color='transparent')
-        row.pack(fill='x', pady=3, padx=5)
-        bubble = ctk.CTkLabel(
-            row, text=text, wraplength=700, justify='left',
-            fg_color=C['primary'] if is_user else C['bg_tertiary'],
-            text_color=C['text_primary'], corner_radius=12,
-            padx=14, pady=10, anchor='w', font=('Segoe UI', 12),
-        )
-        bubble.pack(anchor='e' if is_user else 'w')
+    def _render_prompts(self, cat):
+        for w in self._prompt_row.winfo_children():
+            w.destroy()
+        prompts = next((p for c, p in _QUICK if c == cat), [])
+        for label, prompt in prompts:
+            ctk.CTkButton(
+                self._prompt_row, text=label, height=26, width=148,
+                font=("Segoe UI", 9),
+                fg_color=BG0, hover_color=BLUE, text_color=TEXT,
+                corner_radius=4,
+                command=lambda p=prompt: self._quick_fire(p)
+            ).pack(side="left", padx=(6,2))
+
+    def _quick_fire(self, prompt):
+        self._entry.delete(0, "end")
+        self._entry.insert(0, prompt)
+        self._send()
+
+    # ── context loading ───────────────────────────────────────────────────────
+    def _load_context_async(self):
+        def _fetch():
+            try:
+                snap = bo_session.get_ai_context_snapshot()
+                self._ctx_snapshot = snap
+                stats = snap.get("stats", {})
+                srv_run  = stats.get("servers_running", 0)
+                srv_tot  = stats.get("servers_total", 0)
+                failed   = stats.get("failed_instances", 0)
+                stopped  = [s["name"] for s in snap.get("servers", [])
+                            if s.get("status","").lower() not in ("running","started")]
+                msg = (f"Connected: {stats.get('reports',0)} reports  "
+                       f"{stats.get('users',0)} users  "
+                       f"{srv_run}/{srv_tot} servers  "
+                       f"{failed} failed instances")
+                color = RED if stopped else (AMBER if failed > 0 else GREEN)
+                if not self._destroyed:
+                    self.after(0, lambda: (
+                        self._ctx_lbl.configure(text=msg),
+                        self._ctx_dot.configure(text_color=color)
+                    ))
+            except Exception as e:
+                if not self._destroyed:
+                    self.after(0, lambda: (
+                        self._ctx_lbl.configure(text="Context unavailable — not connected"),
+                        self._ctx_dot.configure(text_color=RED)
+                    ))
+        self._ctx_snapshot = {}
+        threading.Thread(target=_fetch, daemon=True).start()
+
+    # ── chat helpers ──────────────────────────────────────────────────────────
+    def _add_bubble(self, text, role="ai"):
+        ts = datetime.now().strftime("%H:%M")
+        b = _Bubble(self._chat, text, role, ts)
+        b.pack(fill="x", pady=4, padx=14)
         try:
-            self.chat._parent_canvas.yview_moveto(1.0)
+            self._chat._parent_canvas.yview_moveto(1.0)
         except Exception:
             pass
 
     def _clear(self):
-        for w in self.chat.winfo_children():
+        for w in self._chat.winfo_children():
             w.destroy()
         self._history.clear()
 
-    # ── send ──────────────────────────────────────────────────────────────────
+    def _export(self):
+        if not self._history:
+            return
+        path = filedialog.asksaveasfilename(
+            title="Export Chat",
+            defaultextension=".txt",
+            filetypes=[("Text", "*.txt")],
+            initialfile=f"bo_ai_chat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+            parent=self)
+        if not path:
+            return
+        lines = [f"BO Commander AI Assistant — exported {datetime.now():%Y-%m-%d %H:%M}\n{'='*60}\n"]
+        for role, text in self._history:
+            prefix = "You" if role == "user" else "AI "
+            lines.append(f"[{prefix}]  {text}\n")
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines))
+        except Exception as e:
+            pass
 
-    def _quick_send(self, prompt):
-        self.entry.delete(0, 'end')
-        self.entry.insert(0, prompt)
-        self._send()
-
+    # ── send / receive ────────────────────────────────────────────────────────
     def _send(self, event=None):
-        text = self.entry.get().strip()
+        text = self._entry.get().strip()
         if not text:
             return
-        self.entry.delete(0, 'end')
-        self._add_bubble(text, role='user')
-        self._history.append(('user', text))
+        self._entry.delete(0, "end")
+        self._add_bubble(text, role="user")
+        self._history.append(("user", text))
 
-        self._thinking = ctk.CTkLabel(self.chat, text='⏳  Thinking…',
-                                      text_color=C['text_secondary'],
-                                      font=('Segoe UI', 11, 'italic'))
-        self._thinking.pack(anchor='w', padx=20)
-        self._send_btn.configure(state='disabled')
+        # typing indicator
+        self._thinking = ctk.CTkLabel(
+            self._chat, text="⏳  Thinking…",
+            text_color=TEXT2, font=("Segoe UI", 11, "italic"))
+        self._thinking.pack(anchor="w", padx=28, pady=4)
+        try:
+            self._chat._parent_canvas.yview_moveto(1.0)
+        except Exception:
+            pass
+        self._send_btn.configure(state="disabled")
         threading.Thread(target=self._worker, args=(text,), daemon=True).start()
 
     def _worker(self, user_text):
         try:
-            # Domain check — reject non-BO questions
-            if not _is_bo_related(user_text):
-                response = (
-                    "I'm specialised for SAP BusinessObjects (SAP BO) questions only.\n\n"
-                    "I can't help with that topic, but I'm happy to assist with:\n"
+            if not _is_bo(user_text):
+                resp = (
+                    "I specialise exclusively in SAP BusinessObjects (SAP BO/BOBJ) questions.\n\n"
+                    "That topic is outside my scope. I'm happy to help with:\n"
                     "  • SAP BO administration, troubleshooting, performance\n"
                     "  • Webi, Crystal Reports, universes, connections\n"
                     "  • Server setup, security, scheduling, upgrades\n\n"
                     "Please ask a SAP BO related question!"
                 )
             else:
-                ctx = self._build_context() if self._ctx_var.get() else ''
-                history_text = '\n'.join(
-                    f"{'User' if r == 'user' else 'Assistant'}: {t}"
-                    for r, t in self._history[-6:]
-                )
+                ctx = ""
+                if self._ctx_var.get() and self._ctx_snapshot:
+                    snap   = self._ctx_snapshot
+                    stats  = snap.get("stats", {})
+                    stopped= [s["name"] for s in snap.get("servers",[])
+                               if s.get("status","").lower() not in ("running","started")]
+                    recent = snap.get("recent_failures", [])
+                    ctx = (
+                        f"Host: {bo_session.cms_details.get('host','?')}\n"
+                        f"Servers: {stats.get('servers_running',0)}/{stats.get('servers_total',0)} running\n"
+                        f"Failed instances: {stats.get('failed_instances',0)}\n"
+                        f"Reports: {stats.get('reports',0)}  Users: {stats.get('users',0)}\n"
+                    )
+                    if stopped:
+                        ctx += f"Stopped servers: {', '.join(stopped[:5])}\n"
+                    if recent:
+                        ctx += "Recent failures:\n" + "\n".join(
+                            f"  - {f['name']} (owner: {f['owner']})" for f in recent[:5])
+
+                hist = "\n".join(
+                    f"{'User' if r=='user' else 'Assistant'}: {t}"
+                    for r, t in self._history[-8:])
+
                 prompt = (
-                    BO_SYSTEM_PROMPT + '\n\n'
-                    + (f'LIVE BO SYSTEM CONTEXT:\n{ctx}\n\n' if ctx else '')
-                    + f'CONVERSATION:\n{history_text}\nUser: {user_text}\nAssistant:'
+                    _SYSTEM_PROMPT + "\n\n"
+                    + (f"LIVE BO CONTEXT:\n{ctx}\n\n" if ctx else "")
+                    + f"CONVERSATION:\n{hist}\nUser: {user_text}\nAssistant:"
                 )
-                response = ai_client.get_response(prompt)
+                resp = ai_client.get_response(prompt)
         except Exception as e:
-            response = f"Error: {e}"
+            resp = f"Error contacting AI: {e}"
 
-        self.after(0, lambda r=response: self._show(r))
+        if not self._destroyed:
+            self.after(0, lambda r=resp: self._show(r))
 
-    def _show(self, response):
+    def _show(self, resp):
         if self._thinking:
             try:
                 self._thinking.destroy()
             except Exception:
                 pass
             self._thinking = None
-        self._send_btn.configure(state='normal')
-        self._add_bubble(response, role='ai')
-        self._history.append(('ai', response))
-
-    # ── live context (no new sapbo methods needed) ────────────────────────────
-
-    def _build_context(self):
-        lines = []
-        try:
-            if not bo_session.connected:
-                return ''
-            d = bo_session.cms_details
-            lines.append(f"Host: {d.get('host','?')}:{d.get('port','?')} | User: {d.get('user','?')}")
-            stats = bo_session.get_dashboard_stats()
-            lines.append(
-                f"Servers: {stats.get('servers_running',0)}/{stats.get('servers_total',0)} running | "
-                f"Users: {stats.get('users',0)} | Reports: {stats.get('reports',0)} | "
-                f"Universes: {stats.get('universes',0)} | Connections: {stats.get('connections',0)}"
-            )
-            lines.append(
-                f"Failed instances: {stats.get('failed_instances',0)} | "
-                f"Active sessions: {stats.get('active_sessions',0)}"
-            )
-            stopped = [s['name'] for s in stats.get('server_list', []) if not s.get('alive')]
-            if stopped:
-                lines.append(f"Stopped servers: {', '.join(stopped[:5])}")
-        except Exception as e:
-            lines.append(f"Context unavailable: {e}")
-        return '\n'.join(lines)
+        self._send_btn.configure(state="normal")
+        self._add_bubble(resp, role="ai")
+        self._history.append(("ai", resp))

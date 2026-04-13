@@ -13,6 +13,65 @@ from tkinter import ttk, messagebox
 from config import Config
 from core.sapbo_connection import bo_session
 
+# ── AI for Natural Language Query Generator ───────────────────────────────────
+try:
+    from ai.gemini_client import GeminiClient as _GC
+    _QB_AI = _GC()
+    _QB_HAS_AI = True
+except Exception:
+    _QB_AI = None
+    _QB_HAS_AI = False
+
+
+def _ai_to_cms_query(natural_text: str) -> str:
+    """
+    Convert plain English to a CMS SQL query using Gemini AI.
+    Works with any GeminiClient method name (ask/generate/chat/etc).
+    """
+    if not _QB_AI:
+        raise RuntimeError("AI engine not available. Check Gemini API key.")
+
+    system_prompt = (
+        "You are an SAP BusinessObjects CMS SQL expert.\n"
+        "Convert the user\'s plain English request into a valid CMS SQL query.\n\n"
+        "CMS SQL RULES:\n"
+        "- Tables: CI_INFOOBJECTS (reports/folders), CI_SYSTEMOBJECTS (users/servers/groups), CI_APPOBJECTS (universes/connections)\n"
+        "- Reports: SI_KIND IN (\'Webi\',\'CrystalReport\',\'Deski\',\'FullClient\') AND SI_INSTANCE = 0\n"
+        "- Instances: SI_INSTANCE = 1, state: 1=Pending 2=Running 3=Failed 4=Success\n"
+        "- Schedules: SI_SCHEDULE = 1\n"
+        "- Servers: SI_KIND = \'Server\'\n"
+        "- Users: SI_PROGID = \'crystalenterprise.user\'\n"
+        "- Groups: SI_KIND = \'Usergroup\'\n"
+        "- Disabled users: SI_DISABLED = 1\n"
+        "- Always include TOP N (max 500) to avoid overloading\n"
+        "- Common columns: SI_ID, SI_NAME, SI_KIND, SI_OWNER, SI_CREATION_TIME, SI_UPDATE_TS, SI_STARTTIME, SI_ENDTIME\n"
+        "- Scheduling columns: SI_PROCESSINFO.SI_NEXTRUNTIME, SI_PROCESSINFO.SI_STATE\n"
+        "- Server columns: SI_SERVER_IS_ALIVE, SI_TOTAL_NUM_FAILURES, SI_SERVER_HOST\n\n"
+        "OUTPUT ONLY the SQL query, nothing else. No explanation. No markdown. No backticks.\n"
+        "If the request is unclear, write the closest reasonable CMS SQL query."
+    )
+
+    prompt = f"{system_prompt}\n\nUser request: {natural_text}\n\nCMS SQL query:"
+
+    for method_name in ("ask", "generate", "chat", "query",
+                        "generate_content", "send_message", "get_response", "complete"):
+        m = getattr(_QB_AI, method_name, None)
+        if callable(m):
+            try:
+                result = m(prompt)
+                if isinstance(result, str):
+                    return result.strip()
+                if hasattr(result, "text"):
+                    return result.text.strip()
+                if hasattr(result, "candidates"):
+                    return result.candidates[0].content.parts[0].text.strip()
+                return str(result).strip()
+            except Exception as e:
+                raise RuntimeError(f"AI call failed: {e}")
+
+    available = [n for n in dir(_QB_AI) if not n.startswith("_") and callable(getattr(_QB_AI, n))]
+    raise RuntimeError(f"No usable AI method found. Available: {', '.join(available[:8])}")
+
 C = Config.COLORS
 F = Config.FONTS
 
@@ -51,6 +110,13 @@ TEMPLATES = {
             "FROM CI_SYSTEMOBJECTS\n"
             "WHERE SI_KIND = 'Server'\n"
             "AND (SI_SERVER_IS_ALIVE = 0 OR SI_TOTAL_NUM_FAILURES > 0)\n"
+            "ORDER BY SI_TOTAL_NUM_FAILURES DESC"
+        ),
+        "Infrastructure Health Scan": (
+            "SELECT SI_NAME, SI_SERVER_IS_ALIVE,\n"
+            "       SI_TOTAL_NUM_FAILURES, SI_SERVER_HOST\n"
+            "FROM CI_SYSTEMOBJECTS\n"
+            "WHERE SI_KIND = 'Server'\n"
             "ORDER BY SI_TOTAL_NUM_FAILURES DESC"
         ),
     },
@@ -142,6 +208,14 @@ TEMPLATES = {
             "AND SI_INSTANCE = 0\n"
             "ORDER BY SI_UPDATE_TS ASC"
         ),
+        "Content Ownership Mapping": (
+            "SELECT TOP 300 SI_ID, SI_NAME, SI_KIND,\n"
+            "       SI_OWNER, SI_CREATION_TIME\n"
+            "FROM CI_INFOOBJECTS\n"
+            "WHERE SI_INSTANCE = 0\n"
+            "AND SI_KIND IN ('Webi','CrystalReport','Deski')\n"
+            "ORDER BY SI_OWNER ASC"
+        ),
     },
 
     # ── Scheduling & Instances ─────────────────────────────────────────────
@@ -182,6 +256,22 @@ TEMPLATES = {
             "AND SI_PROCESSINFO.SI_STATE = 2\n"
             "ORDER BY SI_STARTTIME DESC"
         ),
+        "Zombie Schedule Detector": (
+            "SELECT TOP 200 SI_ID, SI_NAME, SI_KIND, SI_OWNER,\n"
+            "       SI_PROCESSINFO.SI_NEXTRUNTIME, SI_STARTTIME\n"
+            "FROM CI_INFOOBJECTS\n"
+            "WHERE SI_SCHEDULE = 1\n"
+            "AND SI_INSTANCE = 0\n"
+            "ORDER BY SI_PROCESSINFO.SI_NEXTRUNTIME ASC"
+        ),
+        "Heavy Failure Reports": (
+            "SELECT TOP 200 SI_NAME, SI_OWNER,\n"
+            "       SI_PROCESSINFO.SI_STATE, SI_STARTTIME\n"
+            "FROM CI_INFOOBJECTS\n"
+            "WHERE SI_INSTANCE = 1\n"
+            "AND SI_PROCESSINFO.SI_STATE = 3\n"
+            "ORDER BY SI_STARTTIME DESC"
+        ),
     },
 
     # ── Folders & Structure ────────────────────────────────────────────────
@@ -210,6 +300,13 @@ TEMPLATES = {
             "WHERE SI_KIND LIKE '%Connection%'\n"
             "ORDER BY SI_NAME ASC"
         ),
+        "Folder Content Analyzer": (
+            "SELECT TOP 300 SI_ID, SI_NAME,\n"
+            "       SI_PARENTID, SI_OWNER\n"
+            "FROM CI_INFOOBJECTS\n"
+            "WHERE SI_INSTANCE = 0\n"
+            "ORDER BY SI_PARENTID ASC"
+        ),
     },
 
     # ── Security & Rights ──────────────────────────────────────────────────
@@ -227,10 +324,26 @@ TEMPLATES = {
             "WHERE SI_INSTANCE = 0\n"
             "ORDER BY SI_UPDATE_TS DESC"
         ),
+        "Security Risk Scanner": (
+            "SELECT TOP 200 SI_ID, SI_NAME, SI_KIND\n"
+            "FROM CI_INFOOBJECTS\n"
+            "WHERE SI_INSTANCE = 0\n"
+            "AND (SI_OWNER IS NULL OR SI_OWNER = '')\n"
+            "ORDER BY SI_NAME ASC"
+        ),
     },
 
     # ── Cleanup & Maintenance ──────────────────────────────────────────────
     "Cleanup & Maintenance": {
+        "Orphan Report Detector": (
+            "SELECT TOP 200 SI_ID, SI_NAME, SI_KIND, SI_OWNER,\n"
+            "       SI_CREATION_TIME, SI_UPDATE_TS\n"
+            "FROM CI_INFOOBJECTS\n"
+            "WHERE SI_INSTANCE = 0\n"
+            "AND SI_KIND IN ('Webi','CrystalReport','Deski','FullClient')\n"
+            "AND (SI_OWNER IS NULL OR SI_OWNER = '')\n"
+            "ORDER BY SI_UPDATE_TS DESC"
+        ),
         "All Orphaned Instances": (
             "SELECT TOP 200 SI_ID, SI_NAME, SI_KIND, SI_OWNER,\n"
             "       SI_STARTTIME, SI_ENDTIME\n"
@@ -294,6 +407,120 @@ TEMPLATES = {
             "FROM CI_INFOOBJECTS\n"
             "WHERE SI_INSTANCE = 0\n"
             "ORDER BY SI_KIND ASC"
+        ),
+        "Unused Reports Detector": (
+            "SELECT TOP 200 SI_ID, SI_NAME, SI_KIND,\n"
+            "       SI_OWNER, SI_UPDATE_TS\n"
+            "FROM CI_INFOOBJECTS\n"
+            "WHERE SI_INSTANCE = 0\n"
+            "AND SI_KIND IN ('Webi','CrystalReport','Deski')\n"
+            "ORDER BY SI_UPDATE_TS ASC"
+        ),
+    },
+
+    # ── 🕵️ Admin Intelligence ─────────────────────────────────────────────
+    # These templates answer real admin questions automatically.
+    # No SAP tool has these built-in — this is what makes BO Commander unique.
+    "🕵️ Admin Intelligence": {
+
+        "Failed Instances → Terminated Users": (
+            "SELECT TOP 200 SI_ID, SI_NAME, SI_OWNER,\n"
+            "       SI_STARTTIME, SI_ENDTIME,\n"
+            "       SI_PROCESSINFO.SI_STATE\n"
+            "FROM CI_INFOOBJECTS\n"
+            "WHERE SI_INSTANCE = 1\n"
+            "AND SI_PROCESSINFO.SI_STATE = 3\n"
+            "ORDER BY SI_STARTTIME DESC"
+            "\n-- NOTE: Run 'Disabled Users' from Users & Groups to cross-reference owners"
+        ),
+
+        "Disabled User Content (Orphan Risk)": (
+            "SELECT TOP 200 SI_ID, SI_NAME, SI_KIND, SI_OWNER,\n"
+            "       SI_CREATION_TIME, SI_UPDATE_TS\n"
+            "FROM CI_INFOOBJECTS\n"
+            "WHERE SI_INSTANCE = 0\n"
+            "AND SI_KIND IN ('Webi','CrystalReport','Deski','FullClient')\n"
+            "AND SI_OWNER IN (\n"
+            "    SELECT SI_NAME FROM CI_SYSTEMOBJECTS\n"
+            "    WHERE SI_PROGID = 'crystalenterprise.user'\n"
+            "    AND SI_DISABLED = 1\n"
+            ")\n"
+            "ORDER BY SI_OWNER, SI_UPDATE_TS DESC"
+        ),
+
+        "Zombie Schedules (Inactive Owner)": (
+            "SELECT TOP 200 SI_ID, SI_NAME, SI_KIND, SI_OWNER,\n"
+            "       SI_PROCESSINFO.SI_NEXTRUNTIME, SI_STARTTIME\n"
+            "FROM CI_INFOOBJECTS\n"
+            "WHERE SI_SCHEDULE = 1\n"
+            "AND SI_INSTANCE = 0\n"
+            "AND SI_OWNER IN (\n"
+            "    SELECT SI_NAME FROM CI_SYSTEMOBJECTS\n"
+            "    WHERE SI_PROGID = 'crystalenterprise.user'\n"
+            "    AND SI_DISABLED = 1\n"
+            ")\n"
+            "ORDER BY SI_PROCESSINFO.SI_NEXTRUNTIME ASC"
+        ),
+
+        "Orphan Report Detector (No Owner)": (
+            "SELECT TOP 200 SI_ID, SI_NAME, SI_KIND,\n"
+            "       SI_OWNER, SI_CREATION_TIME, SI_UPDATE_TS\n"
+            "FROM CI_INFOOBJECTS\n"
+            "WHERE SI_INSTANCE = 0\n"
+            "AND SI_KIND IN ('Webi','CrystalReport','Deski','FullClient')\n"
+            "AND (SI_OWNER IS NULL OR SI_OWNER = '')\n"
+            "ORDER BY SI_UPDATE_TS DESC"
+        ),
+
+        "Heavy Failure Reports (Repeated Failures)": (
+            "SELECT TOP 200 SI_NAME, SI_OWNER,\n"
+            "       SI_PROCESSINFO.SI_STATE, SI_STARTTIME\n"
+            "FROM CI_INFOOBJECTS\n"
+            "WHERE SI_INSTANCE = 1\n"
+            "AND SI_PROCESSINFO.SI_STATE = 3\n"
+            "ORDER BY SI_STARTTIME DESC"
+        ),
+
+        "Infrastructure Health Scan": (
+            "SELECT SI_NAME, SI_SERVER_IS_ALIVE,\n"
+            "       SI_TOTAL_NUM_FAILURES, SI_SERVER_HOST\n"
+            "FROM CI_SYSTEMOBJECTS\n"
+            "WHERE SI_KIND = 'Server'\n"
+            "ORDER BY SI_TOTAL_NUM_FAILURES DESC"
+        ),
+
+        "Content Ownership Mapping": (
+            "SELECT TOP 300 SI_ID, SI_NAME, SI_KIND,\n"
+            "       SI_OWNER, SI_CREATION_TIME\n"
+            "FROM CI_INFOOBJECTS\n"
+            "WHERE SI_INSTANCE = 0\n"
+            "AND SI_KIND IN ('Webi','CrystalReport','Deski')\n"
+            "ORDER BY SI_OWNER ASC"
+        ),
+
+        "Unused Reports (Stale Content)": (
+            "SELECT TOP 200 SI_ID, SI_NAME, SI_KIND,\n"
+            "       SI_OWNER, SI_UPDATE_TS\n"
+            "FROM CI_INFOOBJECTS\n"
+            "WHERE SI_INSTANCE = 0\n"
+            "AND SI_KIND IN ('Webi','CrystalReport','Deski')\n"
+            "ORDER BY SI_UPDATE_TS ASC"
+        ),
+
+        "Security Risk Scanner (No Owner)": (
+            "SELECT TOP 200 SI_ID, SI_NAME, SI_KIND\n"
+            "FROM CI_INFOOBJECTS\n"
+            "WHERE SI_INSTANCE = 0\n"
+            "AND (SI_OWNER IS NULL OR SI_OWNER = '')\n"
+            "ORDER BY SI_NAME ASC"
+        ),
+
+        "Folder Content Analyzer": (
+            "SELECT TOP 300 SI_ID, SI_NAME,\n"
+            "       SI_PARENTID, SI_OWNER\n"
+            "FROM CI_INFOOBJECTS\n"
+            "WHERE SI_INSTANCE = 0\n"
+            "ORDER BY SI_PARENTID ASC"
         ),
     },
 }
@@ -584,7 +811,7 @@ class QueryBuilderPage(ctk.CTkFrame):
             picker,
             variable=self._cat_var,
             values=list(TEMPLATES.keys()),
-            width=200,
+            width=230,
             command=self._on_cat_change,
             fg_color=C['bg_tertiary'],
             button_color=C['primary'],
@@ -611,6 +838,47 @@ class QueryBuilderPage(ctk.CTkFrame):
             text_color=C['text_primary'],
         )
         self._tmpl_menu.pack(side='left')
+
+        # ── 🤖 Natural Language Query Generator ───────────────────────────────
+        nl_frame = ctk.CTkFrame(self, fg_color=C['bg_secondary'], corner_radius=8)
+        nl_frame.pack(fill='x', padx=4, pady=(0, 4))
+
+        nl_top = ctk.CTkFrame(nl_frame, fg_color='transparent')
+        nl_top.pack(fill='x', padx=12, pady=(8, 4))
+        ctk.CTkLabel(nl_top,
+                     text='🤖  Natural Language → CMS Query   (AI-Powered)',
+                     font=('Segoe UI', 11, 'bold'),
+                     text_color='#22d3ee').pack(side='left')
+        if not _QB_HAS_AI:
+            ctk.CTkLabel(nl_top, text='⚠ AI unavailable — check Gemini API key',
+                         font=('Segoe UI', 9), text_color='#f59e0b').pack(side='right')
+
+        nl_row = ctk.CTkFrame(nl_frame, fg_color='transparent')
+        nl_row.pack(fill='x', padx=12, pady=(0, 8))
+
+        self._nl_entry = ctk.CTkEntry(
+            nl_row,
+            placeholder_text='e.g.  show failed webi reports  |  find disabled user content  |  zombie schedules',
+            height=32,
+            fg_color=C['bg_tertiary'],
+            border_color=C['bg_tertiary'],
+            text_color=C['text_primary'],
+            font=('Segoe UI', 12),
+        )
+        self._nl_entry.pack(side='left', fill='x', expand=True, padx=(0, 8))
+        self._nl_entry.bind('<Return>', lambda e: self._nl_generate())
+
+        self._nl_btn = ctk.CTkButton(
+            nl_row,
+            text='✨ Generate Query',
+            width=140, height=32,
+            fg_color='#6366f1',
+            hover_color='#4f46e5',
+            font=('Segoe UI', 12, 'bold'),
+            state='normal' if _QB_HAS_AI else 'disabled',
+            command=self._nl_generate,
+        )
+        self._nl_btn.pack(side='right')
 
         # ── Action buttons ─────────────────────────────────────────────────────
         btn_row = ctk.CTkFrame(self, fg_color='transparent')
@@ -786,6 +1054,57 @@ class QueryBuilderPage(ctk.CTkFrame):
             messagebox.showwarning('Missing Library', 'Run: pip install openpyxl')
         except Exception as e:
             messagebox.showerror('Export Error', str(e))
+
+    # ── Natural Language Query Generator ─────────────────────────────────────
+
+    def _nl_generate(self):
+        """
+        Convert the plain English text in the NL entry box into a
+        CMS SQL query using Gemini AI, then load it into the SQL editor.
+        The user can review and edit the generated query before running it.
+        """
+        text = self._nl_entry.get().strip()
+        if not text:
+            messagebox.showinfo("Natural Language Query",
+                                "Type a plain English description first.\n\n"
+                                "Examples:\n"
+                                "  • show failed webi reports\n"
+                                "  • find disabled user content\n"
+                                "  • zombie schedules with inactive owners\n"
+                                "  • reports not run in 90 days\n"
+                                "  • servers with most failures",
+                                parent=self)
+            return
+
+        self._nl_btn.configure(text='⏳ Generating…', state='disabled')
+        self._status_lbl.configure(text='🤖 AI generating CMS SQL…')
+
+        def _do():
+            try:
+                query = _ai_to_cms_query(text)
+                return True, query
+            except Exception as e:
+                return False, str(e)
+
+        def _done(res):
+            ok, result = res
+            self._nl_btn.configure(text='✨ Generate Query', state='normal')
+            if ok:
+                self._editor.delete('1.0', 'end')
+                self._editor.insert('1.0', result)
+                self._status_lbl.configure(text='✅ AI generated query — review then click ▶ Run')
+            else:
+                self._status_lbl.configure(text=f'❌ AI error: {result[:60]}')
+                messagebox.showerror("AI Query Failed",
+                                     f"Could not generate query:\n{result}\n\n"
+                                     "Check your Gemini API key in Settings.",
+                                     parent=self)
+
+        def _run():
+            res = _do()
+            self.after(0, lambda: _done(res))
+
+        threading.Thread(target=_run, daemon=True).start()
 
     # ── Clear ─────────────────────────────────────────────────────────────────
 
