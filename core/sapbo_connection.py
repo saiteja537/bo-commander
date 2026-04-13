@@ -26,6 +26,7 @@ class SAPBOConnection:
         self.session = requests.Session()
         self.cms_details = {'host': 'Unknown', 'port': '6405', 'user': 'None'}
         self._connection_valid = False
+        self._renew_creds = None   # stored for FWB 00003 token auto-renew
 
     @property
     def connected(self):
@@ -38,44 +39,92 @@ class SAPBOConnection:
     # AUTHENTICATION
     # =========================================================================
 
+    # Ports tried in order when connecting.
+    # WACS (6405) is the native REST endpoint; Tomcat (8080) hosts the same
+    # /biprws context in most installs.  Both are tried automatically so the
+    # user never needs to know which service is actually running.
+    _FALLBACK_PORTS = ["6405", "8080"]
+
     def login(self, host, port, user, pwd, auth="secEnterprise"):
-        """Login to SAP BO via WACS REST API."""
+        """Login to SAP BO via REST API with automatic port fallback.
+
+        Tries the requested port first, then every port in _FALLBACK_PORTS,
+        so the tool works whether WACS (6405) or Tomcat (8080) is the active
+        REST endpoint — without any manual .env edits required.
+        """
         if ":" in host:
             host = host.split(":")[0]
-        self.base_url = f"http://{host}:{port}/biprws"
-        try:
-            payload = f"""<attrs xmlns="http://www.sap.com/rws/bip">
-                <attr name="userName" type="string">{user}</attr>
-                <attr name="password" type="string">{pwd}</attr>
-                <attr name="auth" type="string" possibilities="secEnterprise,secLDAP,secWinAD,secSAPR3">{auth}</attr>
-            </attrs>"""
-            r = self.session.post(
-                f"{self.base_url}/logon/long",
-                data=payload,
-                headers={'Content-Type': 'application/xml', 'Accept': 'application/json'},
-                timeout=15
-            )
-            r.raise_for_status()
-            self.logon_token = r.headers.get('X-SAP-LogonToken') or r.json().get('logonToken')
-            if not self.logon_token:
-                return False, "Failed to retrieve logon token"
-            self.cms_details = {'host': host, 'port': port, 'user': user}
-            self.session.headers.update({
-                'X-SAP-LogonToken': self.logon_token,
-                'Accept': 'application/json',
-                'Content-Type': 'application/json'
-            })
-            self._connection_valid = True
-            logger.info(f"✅ Successfully connected as {user} to {host}:{port}")
-            return True, "Success"
-        except requests.exceptions.Timeout:
-            return False, "Connection timeout - check server availability"
-        except requests.exceptions.ConnectionError:
-            return False, "Connection refused - check host and port"
-        except requests.exceptions.HTTPError as e:
-            return False, f"Authentication failed: {str(e)}"
-        except Exception as e:
-            return False, str(e)
+
+        # Requested port first, then fallbacks (no duplicates)
+        ports_to_try = [str(port)]
+        for p in self._FALLBACK_PORTS:
+            if p not in ports_to_try:
+                ports_to_try.append(p)
+
+        payload = (
+            '<attrs xmlns="http://www.sap.com/rws/bip">'
+            f'<attr name="userName" type="string">{user}</attr>'
+            f'<attr name="password" type="string">{pwd}</attr>'
+            f'<attr name="auth" type="string" possibilities="secEnterprise,secLDAP,secWinAD,secSAPR3">{auth}</attr>'
+            '</attrs>'
+        )
+
+        last_error = "Connection refused - check host and port"
+
+        for try_port in ports_to_try:
+            candidate_url = f"http://{host}:{try_port}/biprws"
+            logger.info(f"Attempting login -> {candidate_url}/logon/long")
+            try:
+                r = self.session.post(
+                    f"{candidate_url}/logon/long",
+                    data=payload,
+                    headers={"Content-Type": "application/xml", "Accept": "application/json"},
+                    timeout=15,
+                )
+                r.raise_for_status()
+                token = r.headers.get("X-SAP-LogonToken") or r.json().get("logonToken")
+                if not token:
+                    last_error = "Failed to retrieve logon token"
+                    continue
+
+                # ── Success ──────────────────────────────────────────────
+                self.base_url          = candidate_url
+                self.logon_token       = token
+                self.cms_details       = {"host": host, "port": try_port, "user": user}
+                self._connection_valid = True
+                self._renew_creds      = (host, try_port, user, pwd, auth)
+                self.session.headers.update({
+                    "X-SAP-LogonToken": self.logon_token,
+                    "Accept":           "application/json",
+                    "Content-Type":     "application/json",
+                })
+                logger.info(f"Connected as {user} to {host}:{try_port}")
+                return True, "Success"
+
+            except requests.exceptions.Timeout:
+                last_error = f"Timeout on port {try_port}"
+                logger.warning(last_error)
+                continue
+            except requests.exceptions.ConnectionError:
+                last_error = f"Connection refused on port {try_port}"
+                logger.warning(last_error)
+                continue
+            except requests.exceptions.HTTPError as e:
+                # Real auth failure — wrong password etc.  No point retrying
+                # other ports with the same bad credentials.
+                msg = f"Authentication failed: {str(e)}"
+                logger.error(msg)
+                return False, msg
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"Unexpected error on port {try_port}: {e}")
+                continue
+
+        logger.error(f"Login failed on all ports {ports_to_try}: {last_error}")
+        return False, (
+            f"Connection refused on ports {', '.join(ports_to_try)} — "
+            "verify SAP BO services (WACS/Tomcat) are running"
+        )
 
     def logout(self):
         """Graceful logout."""
@@ -92,8 +141,40 @@ class SAPBOConnection:
     # CMS QUERY ENGINE
     # =========================================================================
 
+    # =========================================================================
+    # TOKEN AUTO-RENEWAL
+    # =========================================================================
+    def _renew_token(self):
+        """
+        FIX: FWB 00003 — SAP BO logon tokens expire after ~1 hour by default.
+        This silently re-authenticates using stored credentials so the UI stays
+        connected without forcing the user to log in again.
+        """
+        if not hasattr(self, '_renew_creds') or not self._renew_creds:
+            logger.warning("Token expired but no stored credentials for auto-renew.")
+            self._connection_valid = False
+            return False
+        try:
+            host, port, user, pwd, auth = self._renew_creds
+            logger.info(f"Token expired — auto-renewing session for {user}@{host}:{port}")
+            ok, msg = self.login(host, port, user, pwd, auth)
+            if ok:
+                logger.info("✅ Token auto-renewed successfully")
+                return True
+            else:
+                logger.error(f"Token auto-renew failed: {msg}")
+                self._connection_valid = False
+                return False
+        except Exception as e:
+            logger.error(f"Token auto-renew error: {e}")
+            self._connection_valid = False
+            return False
+
     def run_cms_query(self, query, timeout=45):
-        """Execute a CMS SQL query via REST API."""
+        """Execute a CMS SQL query via REST API.
+        FIX: Auto-renew token on FWB 00003 (expired token) instead of
+        flooding the log with 401 errors and returning None for every query.
+        """
         if not self.logon_token:
             logger.warning("No active session - cannot run query")
             return None
@@ -107,6 +188,25 @@ class SAPBOConnection:
                 result = r.json()
                 logger.info(f"Query returned {len(result.get('entries', []))} entries")
                 return result
+            elif r.status_code == 401:
+                # FWB 00003 — token expired. Try to renew once then retry.
+                logger.warning("401 Unauthorized — attempting token renewal…")
+                if self._renew_token():
+                    # Retry with new token
+                    r2 = self.session.post(
+                        f"{self.base_url}/v1/cmsquery",
+                        json={"query": query},
+                        timeout=timeout
+                    )
+                    if r2.status_code == 200:
+                        result = r2.json()
+                        logger.info(f"Query returned {len(result.get('entries', []))} entries (after renew)")
+                        return result
+                    logger.error(f"Query failed after renew: {r2.status_code}: {r2.text[:200]}")
+                    return None
+                else:
+                    logger.error(f"Query failed with status {r.status_code}: {r.text[:200]}")
+                    return None
             else:
                 logger.error(f"Query failed with status {r.status_code}: {r.text[:200]}")
                 return None
@@ -122,40 +222,73 @@ class SAPBOConnection:
     # =========================================================================
 
     def get_all_servers(self):
-        """Fetch all BO servers with status."""
-        q = """SELECT SI_ID, SI_NAME, SI_KIND, SI_SERVER_IS_ALIVE, SI_DESCRIPTION,
-               SI_SERVER_FAILURE_START_TIME, SI_TOTAL_NUM_FAILURES
-               FROM CI_SYSTEMOBJECTS WHERE SI_KIND = 'Server' ORDER BY SI_NAME ASC"""
-        d = self.run_cms_query(q)
-        if not d or 'entries' not in d:
-            return []
-        servers = []
-        for e in d['entries']:
-            try:
-                alive = e.get('SI_SERVER_IS_ALIVE', False)
-                servers.append({
-                    'id':           e.get('SI_ID', 0),
-                    'name':         e.get('SI_NAME', 'Unknown'),
-                    'kind':         e.get('SI_KIND', 'Server'),
-                    'status':       'Running' if alive else 'Stopped',
-                    'alive':        alive,
-                    'description':  e.get('SI_DESCRIPTION', ''),
-                    'failures':     e.get('SI_TOTAL_NUM_FAILURES', 0),
-                    'last_failure': e.get('SI_SERVER_FAILURE_START_TIME', 'N/A')
-                })
-            except Exception as ex:
-                logger.warning(f"Error processing server: {ex}")
-        return servers
+        """Fetch all BO servers with status.
+        FIX: SI_KIND='Server' does NOT work — BO stores servers with their exact
+        type names (AdaptiveJobServer, CrystalReportsProcessingServer, etc.).
+        Use SI_PROGID = 'crystalenterprise.server' OR query all CI_SYSTEMOBJECTS
+        rows that have SI_SERVER_IS_ALIVE defined.
+        """
+        # Primary: progid filter — works on all BO 4.x versions
+        for q in [
+            # Attempt 1: progid-based (most reliable)
+            """SELECT TOP 200 SI_ID, SI_NAME, SI_KIND, SI_SERVER_IS_ALIVE,
+               SI_DESCRIPTION, SI_TOTAL_NUM_FAILURES
+               FROM CI_SYSTEMOBJECTS
+               WHERE SI_PROGID = 'crystalenterprise.server'
+               ORDER BY SI_NAME ASC""",
+            # Attempt 2: LIKE-based fallback (wider net)
+            """SELECT TOP 200 SI_ID, SI_NAME, SI_KIND, SI_SERVER_IS_ALIVE,
+               SI_DESCRIPTION, SI_TOTAL_NUM_FAILURES
+               FROM CI_SYSTEMOBJECTS
+               WHERE SI_KIND LIKE '%Server%'
+               ORDER BY SI_NAME ASC""",
+        ]:
+            d = self.run_cms_query(q)
+            if d and d.get('entries'):
+                servers = []
+                for e in d['entries']:
+                    try:
+                        alive = e.get('SI_SERVER_IS_ALIVE', False)
+                        # get host from SI_NAME (format: HOSTNAME.ServerType)
+                        name = e.get('SI_NAME', '')
+                        host = name.split('.')[0] if '.' in name else self.cms_details.get('host','')
+                        servers.append({
+                            'id':           e.get('SI_ID', 0),
+                            'name':         name,
+                            'kind':         e.get('SI_KIND', 'Server'),
+                            'host':         host,
+                            'status':       'Running' if alive else 'Stopped',
+                            'alive':        alive,
+                            'description':  e.get('SI_DESCRIPTION', ''),
+                            'failures':     e.get('SI_TOTAL_NUM_FAILURES', 0) or 0,
+                            'last_failure': e.get('SI_SERVER_FAILURE_START_TIME', 'N/A'),
+                            'pid':          e.get('SI_PID', ''),
+                        })
+                    except Exception as ex:
+                        logger.warning(f"Error processing server: {ex}")
+                if servers:
+                    logger.info(f"Query returned {len(servers)} entries")
+                    return servers
+        return []
 
     def toggle_server_state(self, server_id, action='start'):
-        """Start or stop a server."""
-        try:
-            r = self.session.post(f"{self.base_url}/v1/servers/{server_id}/{action}", timeout=30)
-            if r.status_code in [200, 202]:
-                return (True, f"Server {action} command sent")
-            return (False, f"Command failed with status {r.status_code}")
-        except Exception as e:
-            return (False, str(e))
+        """
+        SAP BO REST API does NOT support server start/stop.
+        This requires CMC (Java Admin SDK) or direct SIA access.
+        We return an honest message with the CMC URL instead of faking it.
+        """
+        host = self.cms_details.get('host', 'localhost')
+        cmс_url = f"http://{host}:8080/BOE/CMC/"
+        return (
+            False,
+            f"Server {action} is not possible via REST API — SAP BO requires CMC or Java SDK.\n"
+            f"Open CMC to manage servers: {cmс_url}"
+        )
+
+    def get_server_start_url(self):
+        """Return the CMC URL where admins can start/stop servers."""
+        host = self.cms_details.get('host', 'localhost')
+        return f"http://{host}:8080/BOE/CMC/"
 
     def get_server_properties(self, server_id):
         q = f"SELECT * FROM CI_SYSTEMOBJECTS WHERE SI_ID = {server_id}"
@@ -201,9 +334,33 @@ class SAPBOConnection:
         } for e in d['entries']]
 
     def kill_session(self, session_id):
+        """
+        Kill / force-logoff a session.
+        SAP BO 4.x REST uses DELETE /biprws/logoff for own session.
+        For admin killing another user's session, the infostore delete approach
+        is the most reliable cross-version method.
+        """
         try:
-            r = self.session.delete(f"{self.base_url}/v1/sessions/{session_id}", timeout=20)
-            return (r.status_code == 200, "Session killed" if r.status_code == 200 else "Kill failed")
+            # Method 1: try the admin session endpoint (BO 4.3+)
+            r = self.session.delete(
+                f"{self.base_url}/session/{session_id}",
+                timeout=20
+            )
+            if r.status_code in (200, 204):
+                return (True, "Session killed")
+            # Method 2: infostore delete (works when session has a CMS object)
+            r2 = self.session.delete(
+                f"{self.base_url}/infostore/{session_id}",
+                timeout=20
+            )
+            if r2.status_code in (200, 204):
+                return (True, "Session removed")
+            # Parse error body
+            try:
+                msg = r2.json().get("message", r2.text[:120])
+            except Exception:
+                msg = r2.text[:120] if r2.text else f"HTTP {r2.status_code}"
+            return (False, f"Kill failed: {msg}")
         except Exception as e:
             return (False, str(e))
 
@@ -274,14 +431,64 @@ class SAPBOConnection:
         return hierarchy
 
     def create_user(self, name, password, email='', full_name='', auth_type='secEnterprise'):
+        """
+        Create a user. BO 4.2 requires XML body; 4.3+ accepts JSON.
+        We try JSON first (4.3+), then XML fallback (4.2).
+        Endpoint: POST /biprws/users (no /v1/ prefix).
+        """
+        # ── Attempt 1: JSON (BO 4.3+) ─────────────────────────────────────────
         try:
-            payload = {"attrs": {
-                "SI_NAME": name, "SI_PASSWORD": password,
-                "SI_EMAIL_ADDRESS": email, "SI_DESCRIPTION": full_name,
-                "SI_AUTH_TYPE": auth_type,
-            }}
-            r = self.session.post(f"{self.base_url}/v1/users", json=payload, timeout=20)
-            return (r.status_code in (200, 201), r.text[:200])
+            payload = {
+                "SI_NAME":          name,
+                "SI_PASSWORD":      password,
+                "SI_EMAIL_ADDRESS": email,
+                "SI_DESCRIPTION":   full_name,
+                "SI_AUTH_TYPE":     auth_type,
+            }
+            r = self.session.post(
+                f"{self.base_url}/users",
+                json=payload,
+                timeout=20
+            )
+            if r.status_code in (200, 201):
+                return (True, f"User '{name}' created")
+            if r.status_code not in (400, 415, 500):
+                try:
+                    err = r.json().get("message", r.text[:120])
+                except Exception:
+                    err = r.text[:120]
+                return (False, f"Create failed (HTTP {r.status_code}): {err}")
+        except Exception as e:
+            logger.debug(f"create_user JSON attempt: {e}")
+
+        # ── Attempt 2: XML (BO 4.2 / older versions) ──────────────────────────
+        try:
+            xml_body = (
+                f'<attrs xmlns="http://www.sap.com/rws/bip">'
+                f'<attr name="userName" type="string">{name}</attr>'
+                f'<attr name="password" type="string">{password}</attr>'
+                f'<attr name="auth" type="string">{auth_type}</attr>'
+                f'<attr name="email" type="string">{email}</attr>'
+                f'<attr name="fullName" type="string">{full_name}</attr>'
+                f'</attrs>'
+            )
+            r2 = self.session.post(
+                f"{self.base_url}/users",
+                data=xml_body.encode("utf-8"),
+                headers={**dict(self.session.headers), "Content-Type": "application/xml"},
+                timeout=20
+            )
+            if r2.status_code in (200, 201):
+                return (True, f"User '{name}' created")
+            try:
+                import xml.etree.ElementTree as ET
+                root = ET.fromstring(r2.text)
+                ns = "{http://www.sap.com/rws/bip}"
+                msg_el = root.find(f".//{ns}message") or root.find(".//message")
+                err = msg_el.text if msg_el is not None else r2.text[:120]
+            except Exception:
+                err = r2.text[:120] if r2.text else f"HTTP {r2.status_code}"
+            return (False, f"Create failed: {err}")
         except Exception as e:
             return (False, str(e))
 
@@ -289,18 +496,40 @@ class SAPBOConnection:
         return self.delete_object(user_id)
 
     def reset_user_password(self, user_id, new_password):
+        """
+        Reset a user's password. Uses PUT /infostore/{id} (no /v1/ prefix).
+        """
         try:
-            r = self.session.put(f"{self.base_url}/v1/users/{user_id}",
-                                 json={"attrs": {"SI_PASSWORD": new_password}}, timeout=20)
-            return (r.status_code == 200, "Password reset" if r.status_code == 200 else r.text[:100])
+            r = self.session.put(
+                f"{self.base_url}/infostore/{user_id}",
+                json={"SI_PASSWORD": new_password},
+                timeout=20
+            )
+            if r.status_code in (200, 204):
+                return (True, "Password reset successfully")
+            try:
+                err = r.json().get("message", r.text[:120])
+            except Exception:
+                err = r.text[:120] if r.text else f"HTTP {r.status_code}"
+            return (False, f"Password reset failed: {err}")
         except Exception as e:
             return (False, str(e))
 
     def disable_user(self, user_id, disabled=True):
+        """Enable or disable a user. Uses PUT /infostore/{id}."""
         try:
-            r = self.session.put(f"{self.base_url}/v1/users/{user_id}",
-                                 json={"attrs": {"SI_DISABLED": disabled}}, timeout=20)
-            return (r.status_code == 200, "Updated" if r.status_code == 200 else r.text[:100])
+            r = self.session.put(
+                f"{self.base_url}/infostore/{user_id}",
+                json={"SI_DISABLED": disabled},
+                timeout=20
+            )
+            if r.status_code in (200, 204):
+                return (True, "Disabled" if disabled else "Enabled")
+            try:
+                err = r.json().get("message", r.text[:120])
+            except Exception:
+                err = r.text[:120] if r.text else f"HTTP {r.status_code}"
+            return (False, f"Update failed: {err}")
         except Exception as e:
             return (False, str(e))
 
@@ -476,16 +705,24 @@ class SAPBOConnection:
     # =========================================================================
 
     def get_instances(self, status=None, limit=100):
-        q = f"""SELECT TOP {limit} SI_ID, SI_NAME, SI_KIND, SI_OWNER, SI_INSTANCE,
-                SI_PROCESSINFO.SI_STATUS_INFO AS SI_STATUS,
-                SI_STARTTIME, SI_ENDTIME, SI_TOTAL_DURATION
-                FROM CI_INFOOBJECTS WHERE SI_INSTANCE = 1"""
+        """Fetch report instances.
+        FIX: SI_PROCESSINFO.SI_STATUS_INFO subquery syntax causes RWS 00070
+        on BO 4.2/4.3. Use SI_STATUS directly (simpler, supported on all versions).
+        """
+        # Build WHERE clause without subquery dot-notation
+        where = "SI_INSTANCE = 1"
         if status is not None:
             status_map = {'success': 0, 'failed': 1, 'running': 2, 'pending': 3}
             if isinstance(status, str) and status.lower() in status_map:
-                status = status_map[status.lower()]
-            q += f" AND SI_PROCESSINFO.SI_STATUS_INFO = {status}"
-        q += " ORDER BY SI_STARTTIME DESC"
+                sc = status_map[status.lower()]
+                where += f" AND SI_STATUS = {sc}"
+            elif isinstance(status, int):
+                where += f" AND SI_STATUS = {status}"
+
+        q = (f"SELECT TOP {limit} SI_ID, SI_NAME, SI_KIND, SI_OWNER, "
+             f"SI_STATUS, SI_STARTTIME, SI_ENDTIME "
+             f"FROM CI_INFOOBJECTS WHERE {where} "
+             f"ORDER BY SI_STARTTIME DESC")
         d = self.run_cms_query(q)
         if not d or not d.get('entries'):
             logger.warning("No instances found")
@@ -493,7 +730,7 @@ class SAPBOConnection:
         instances = []
         for e in d['entries']:
             try:
-                sc = e.get('SI_STATUS', 0)
+                sc = e.get('SI_STATUS', -1)
                 instances.append({
                     'id':          e.get('SI_ID', 0),
                     'name':        e.get('SI_NAME', 'Unknown'),
@@ -503,7 +740,7 @@ class SAPBOConnection:
                     'status_code': sc,
                     'start_time':  e.get('SI_STARTTIME', 'N/A'),
                     'end_time':    e.get('SI_ENDTIME', 'N/A'),
-                    'duration':    e.get('SI_TOTAL_DURATION', 0)
+                    'duration':    0,
                 })
             except Exception as ex:
                 logger.warning(f"Error processing instance: {ex}")
@@ -513,13 +750,30 @@ class SAPBOConnection:
         return self.delete_object(instance_id)
 
     def purge_old_instances(self, days=30):
-        q = f"""SELECT SI_ID FROM CI_INFOOBJECTS WHERE SI_INSTANCE = 1
-                AND SI_STARTTIME < DATEADD(day, -{days}, GETDATE())"""
+        """FIX: DATEADD/GETDATE() not supported in CMS SQL.
+        Fetch all instances and filter by date in Python instead.
+        """
+        q = f"""SELECT TOP 2000 SI_ID, SI_STARTTIME FROM CI_INFOOBJECTS
+                WHERE SI_INSTANCE = 1 ORDER BY SI_STARTTIME ASC"""
         d = self.run_cms_query(q)
         if not d or not d.get('entries'):
             return 0, "No old instances found"
-        deleted = sum(1 for e in d['entries'] if self.delete_instance(e['SI_ID'])[0])
-        return deleted, f"Purged {deleted} instances"
+        from datetime import datetime, timedelta
+        cutoff = datetime.now() - timedelta(days=int(days))
+        to_delete = []
+        for e in d['entries']:
+            try:
+                st = str(e.get('SI_STARTTIME',''))
+                if st and st != 'N/A':
+                    dt = datetime.fromisoformat(st[:19])
+                    if dt < cutoff:
+                        to_delete.append(e['SI_ID'])
+            except Exception:
+                pass
+        if not to_delete:
+            return 0, f"No instances older than {days} days found"
+        deleted = sum(1 for iid in to_delete if self.delete_instance(iid)[0])
+        return deleted, f"Purged {deleted} instances older than {days} days"
 
     def reschedule_failed_instances(self):
         failed = self.get_instances(status='failed')
@@ -701,10 +955,13 @@ class SAPBOConnection:
         } for e in d['entries']]
 
     def restore_from_recycle_bin(self, object_id):
-        """Restore object from Recycle Bin."""
+        """Restore object from Recycle Bin. Uses PUT /infostore/{id}."""
         try:
-            r = self.session.put(f"{self.base_url}/v1/infostore/{object_id}",
-                                 json={"attrs": {"SI_TRASHCAN": 0}}, timeout=20)
+            r = self.session.put(
+                f"{self.base_url}/infostore/{object_id}",
+                json={"SI_TRASHCAN": 0},
+                timeout=20
+            )
             return r.status_code in (200, 204)
         except Exception as e:
             logger.error(f"restore_from_recycle_bin: {e}")
@@ -742,11 +999,55 @@ class SAPBOConnection:
         } for e in d['entries']]
 
     def schedule_report(self, report_id, schedule_type='now', params=None):
+        """
+        Schedule / run a report via BO REST API.
+        CRITICAL: Must use Content-Type application/xml — JSON causes RWS 00070.
+        Endpoint: POST /biprws/schedule/{id}  (no /v1/ prefix)
+        """
         try:
-            r = self.session.post(
-                f"{self.base_url}/v1/infostore/{report_id}/schedules",
-                json={"scheduleType": schedule_type, **(params or {})}, timeout=30)
-            return (r.status_code in (200, 201, 202), r.text[:200])
+            session_obj = self.session
+            tok = self.logon_token or ""
+            auth_headers = {
+                **dict(session_obj.headers),
+                "X-SAP-LogonToken": tok,
+                "Accept": "application/xml",
+                "Content-Type": "application/xml",
+            }
+            # Minimal runNow XML — works on BO 4.2, 4.3, 4.4
+            schedule_xml = (
+                '<?xml version="1.0" encoding="UTF-8"?>'
+                '<schedule xmlns="http://www.sap.com/rws/bip">'
+                '<runNow>true</runNow>'
+                '</schedule>'
+            )
+            url = f"{self.base_url}/schedule/{report_id}"
+            r = session_obj.post(url, data=schedule_xml.encode("utf-8"),
+                                  headers=auth_headers, timeout=30)
+            if r.status_code in (200, 201, 202):
+                return (True, "Report scheduled successfully")
+            # Try alternate root element (some BO versions)
+            if r.status_code in (400, 500):
+                alt_xml = (
+                    '<?xml version="1.0" encoding="UTF-8"?>'
+                    '<scheduleInfo xmlns="http://www.sap.com/rws/bip">'
+                    '<runNow>true</runNow>'
+                    '</scheduleInfo>'
+                )
+                r2 = session_obj.post(url, data=alt_xml.encode("utf-8"),
+                                       headers=auth_headers, timeout=30)
+                if r2.status_code in (200, 201, 202):
+                    return (True, "Report scheduled successfully")
+                r = r2
+            # Parse XML error
+            try:
+                import xml.etree.ElementTree as ET
+                root = ET.fromstring(r.text)
+                ns = "{http://www.sap.com/rws/bip}"
+                msg_el = root.find(f".//{ns}message") or root.find(".//message")
+                err = msg_el.text if msg_el is not None else r.text[:200]
+            except Exception:
+                err = r.text[:200] if r.text else f"HTTP {r.status_code}"
+            return (False, err)
         except Exception as e:
             return (False, str(e))
 
@@ -902,17 +1203,48 @@ class SAPBOConnection:
     # =========================================================================
 
     def delete_object(self, obj_id):
+        """
+        Delete any CMS object by ID.
+        Correct endpoint: DELETE /biprws/infostore/{id}  (no /v1/ prefix).
+        """
         try:
-            r = self.session.delete(f"{self.base_url}/v1/infostore/{obj_id}", timeout=20)
-            return (r.status_code == 200, "Deleted" if r.status_code == 200 else "Delete Failed")
+            r = self.session.delete(
+                f"{self.base_url}/infostore/{obj_id}",
+                timeout=20
+            )
+            if r.status_code in (200, 202, 204):
+                return (True, "Deleted")
+            # Parse error response (XML or JSON)
+            try:
+                import xml.etree.ElementTree as ET
+                root = ET.fromstring(r.text)
+                ns = "{http://www.sap.com/rws/bip}"
+                msg_el = root.find(f".//{ns}message") or root.find(".//message")
+                err = msg_el.text if msg_el is not None else r.text[:120]
+            except Exception:
+                try:
+                    err = r.json().get("message", r.text[:120])
+                except Exception:
+                    err = r.text[:120] if r.text else f"HTTP {r.status_code}"
+            return (False, f"Delete failed (HTTP {r.status_code}): {err}")
         except Exception as e:
             return (False, str(e))
 
     def move_object(self, obj_id, target_folder_id):
+        """Move object to a different folder. Uses PUT /infostore/{id}."""
         try:
-            r = self.session.put(f"{self.base_url}/v1/infostore/{obj_id}",
-                                 json={"parentId": target_folder_id}, timeout=20)
-            return (r.status_code == 200, "Moved" if r.status_code == 200 else "Move Failed")
+            r = self.session.put(
+                f"{self.base_url}/infostore/{obj_id}",
+                json={"SI_PARENTID": target_folder_id},
+                timeout=20
+            )
+            if r.status_code in (200, 204):
+                return (True, "Moved")
+            try:
+                err = r.json().get("message", r.text[:120])
+            except Exception:
+                err = r.text[:120] if r.text else f"HTTP {r.status_code}"
+            return (False, f"Move failed: {err}")
         except Exception as e:
             return (False, str(e))
 
@@ -1441,14 +1773,15 @@ class SAPBOConnection:
         """
         Update custom attributes on a BO object.
         attrs: dict of {field_name: value}
+        Uses PUT /infostore/{id} (no /v1/ prefix).
         """
         try:
             r = self.session.put(
-                f"{self.base_url}/v1/infostore/{object_id}",
-                json={"attrs": attrs},
+                f"{self.base_url}/infostore/{object_id}",
+                json=attrs,
                 timeout=20
             )
-            return (r.status_code in (200, 204), "Updated" if r.status_code in (200,204) else r.text[:100])
+            return (r.status_code in (200, 204), "Updated" if r.status_code in (200, 204) else r.text[:100])
         except Exception as e:
             return (False, str(e))
 
@@ -2128,11 +2461,11 @@ class SAPBOConnection:
         except Exception as e:
             logger.debug(f"get_report_instances REST: {e}")
 
-        # Fallback: CMS query for instances
+        # Fallback: CMS query for instances — no dot-notation (causes RWS 00070)
         try:
             q = (
                 f"SELECT TOP {limit} SI_ID, SI_NAME, SI_KIND, SI_OWNER, "
-                f"SI_STARTTIME, SI_ENDTIME, SI_PROCESSINFO.SI_STATUS_INFO AS SI_STATUS "
+                f"SI_STARTTIME, SI_ENDTIME, SI_STATUS "
                 f"FROM CI_INFOOBJECTS "
                 f"WHERE SI_INSTANCE=1 AND SI_PARENTID={report_id} "
                 f"ORDER BY SI_STARTTIME DESC"
